@@ -1,6 +1,9 @@
 ############## Loading packages and data #####################
 
 package_list <- c("tidyverse",
+ #                 "httr",
+  #                "jsonlite",
+                  "academictwitteR",
                   "glue",
                   "here",
                   "tidytext",
