@@ -1,0 +1,165 @@
+---
+title: "Naming Communities"
+author: "Aurélien Goutsmedt"
+date: "23/05/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, cache = TRUE)
+ if ("knitr" %in% installed.packages() == FALSE) {
+    install.packages(knitr, dependencies = TRUE)
+  }
+library(knitr)
+ if ("kableExtra" %in% installed.packages() == FALSE) {
+    install.packages(kableExtra, dependencies = TRUE)
+  }
+library(kableExtra)
+library(here)
+```
+
+```{css zoom-lib-src, echo = FALSE}
+# Follows the css and js script used for allow zooming in graphs
+script src = "https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"
+```
+
+```{js zoom-jquery, echo = FALSE}
+ $(document).ready(function() {
+    $('body').prepend('<div class=\"zoomDiv\"><img src=\"\" class=\"zoomImg\"></div>');
+    // onClick function for all plots (img's)
+    $('img:not(.zoomImg)').click(function() {
+      $('.zoomImg').attr('src', $(this).attr('src')).css({width: '100%'});
+      $('.zoomDiv').css({opacity: '1', width: 'auto', border: '1px solid white', borderRadius: '5px', position: 'fixed', top: '50%', left: '50%', marginRight: '-50%', transform: 'translate(-50%, -50%)', boxShadow: '0px 0px 50px #888888', zIndex: '50', overflow: 'auto', maxHeight: '100%'});
+    });
+    // onClick function for zoomImg
+    $('img.zoomImg').click(function() {
+      $('.zoomDiv').css({opacity: '0', width: '0%'}); 
+    });
+  });
+```
+
+```{r loading files}
+source(here("function","functions_for_network_analysis.R"))
+source(here("packages_and_data.R"))
+
+tweets <- readRDS(here(data_path, "tweets", "ecb_tweets.RDS")) %>% 
+  data.table()
+retweets <- readRDS(here(data_path, "tweets", "ecb_retweets.RDS")) %>% 
+  data.table()
+retweets_user <- readRDS(here(data_path, "tweets", "ecb_retweets_user.RDS")) %>% 
+  data.table()
+
+users <- data.table(retweets_user) %>% 
+  .[, list(id, username, name, description, public_metrics.followers_count)] %>% 
+  unique()
+doublons <- which(duplicated(users$id)) 
+users <- users[-doublons] %>% 
+  rename(author_id = id,
+         followers = public_metrics.followers_count)
+
+alluv_dt <- readRDS(here(data_path, "tweets", "alluv.RDS")) %>% 
+  filter(color != "grey") %>% 
+  mutate(author_id = ID_Art) %>% 
+  left_join(users) %>% 
+  .[, `:=` (min_window = min(as.integer(Window)), max_window = max(as.integer(Window)) + 2), by = "new_Id_com"]
+
+alluv_dt_with_tweets <- alluv_dt %>% 
+  left_join(select(retweets, author_id, id = referenced_tweets_id, created_at)) %>% 
+  left_join(select(tweets, id, text))
+
+
+tf_idf_words <- readRDS(here(data_path, "tweets", "tf_idf.rds"))
+tf_idf_tweets <- alluv_dt_with_tweets %>%
+  select(new_Id_com, id, text) %>% 
+  add_count(new_Id_com, id) %>% 
+  filter(n >= 3) %>% 
+  unique() %>% 
+  bind_tf_idf(id, new_Id_com, n)
+```
+
+
+```{r top-accounts}
+# for later
+nb_retweets <- retweets %>% 
+  count(author_id)
+top_retweeter <- users %>% 
+  left_join(nb_retweets) %>% 
+  select(author_id, username, name, description, n) %>% 
+  distinct(author_id, .keep_all = TRUE) %>% 
+  slice_max(n, n = 20)
+
+print(kbl(top_retweeter) %>% 
+        kable_styling(bootstrap_options = c("striped","condensed")))
+
+```
+
+```{r alluvial_plot, eval=TRUE}
+include_graphics(here("pictures","alluvial.png"))
+```
+
+```{r,results = "asis", eval=TRUE}
+for (com in unique(alluv_dt[order(ID_bis)]$Com_ID)) {
+  ####################### Preparing the data to put in the template
+  
+  # restricting alluv_dt to the community at stake
+  alluv_com  <- alluv_dt[new_Id_com == com]
+  tf_idf_words_com <- tf_idf_words[new_Id_com == com] %>% 
+    select(lemma, tf_idf) %>% 
+    slice_max(tf_idf, n = 15)
+  tf_idf_tweets_com <- tf_idf_tweets[new_Id_com == com] %>% 
+    select(text, tf_idf) %>% 
+    slice_max(tf_idf, n = 15)
+  alluv_dt_with_tweets_com <- alluv_dt_with_tweets[new_Id_com == com] %>% 
+    mutate(tweet_date = str_extract(created_at, "^\\d{4}") %>% as.integer)
+
+  # most followed accounts
+  top_followers <- alluv_com %>%
+    select(name, description, followers) %>% 
+    unique %>% 
+    slice_max(followers, n = 10, with_ties = FALSE)
+    
+  # most retweeting accounts
+  top_retweeters <- alluv_dt_with_tweets_com %>% 
+    filter(between(tweet_date, min_window, max_window)) %>% 
+    add_count(author_id) %>% 
+    select(name, description, n) %>% 
+    unique() %>% 
+    slice_max(n, n = 10, with_ties = FALSE)
+
+################ Beginning of the template ######################
+  cat(sprintf("  \n## Community %s (`%s`) \n\n", unique(alluv_com[new_Id_com == com]$ID_bis),com))
+  cat(paste0("  \nThe community exists from ", unique(alluv_com[new_Id_com == com]$min_window)," to ", unique(alluv_com[new_Id_com == com]$max_window),". \n"))
+  cat(paste0("  \nThe community gathers ",length(unique(alluv_com$ID_Art))," accounts It represents ", round(unique(alluv_com$share_leiden_total)*100,2), "% of the whole corpus. In the three-year window when its share in the network is the bigggest, it represents ", round(unique(alluv_com$share_max)*100,2), "% of the corresponding three-year network. \n"))
+  
+  cat(sprintf("  \n### Most followed accounts of the community %s \n\n", unique(alluv_com[Com_ID == com]$ID_bis)))
+  cat(paste0("In the next table, you have the ten articles of the community with the highest normalised deviation measure, which compares the number of citations within the community, with the number of citations in the whole corpus between . \n\n"))
+  
+  print(kbl(top_followers) %>% 
+  kable_styling(bootstrap_options = c("striped","condensed")))
+  
+  cat(sprintf("  \n### Most retweeting account in the community %s \n\n", unique(alluv_com[Com_ID == com]$ID_bis)))
+  cat(paste0("In the next table, you have the fifteen most cited references by the articles of the community. \n\n"))
+  
+  print(kbl(top_retweeters) %>% 
+        kable_styling(bootstrap_options = c("striped","condensed")))
+  
+  cat(sprintf("  \n### Terms with the highest TF-IDF value in community %s \n\n", unique(alluv_com[Com_ID == com]$ID_bis)))
+  cat(paste0("  \nWe have extracted all the terms (unigrams and bigrams, that is one word and two words) in the title of all the community articles. We display here the 20 terms which indentifies the most this particular community, in comparison to the other communities."))
+plot(ggplot(tf_idf_words_com, aes(reorder(lemma, tf_idf), tf_idf)) +
+    geom_bar(stat = "identity", alpha = .8, show.legend = FALSE) +
+    labs(
+      title = "Highest tf-idf",
+      x = "Words", y = "tf-idf"
+    ) +
+    scale_x_reordered() +
+    coord_flip() +
+    theme_minimal())
+  
+  cat("  \n")
+  
+  cat(sprintf("  \n### Tweets with the highest TF-IDF value in community %s \n\n", unique(alluv_com[Com_ID == com]$ID_bis)))
+    print(kbl(tf_idf_tweets_com) %>% 
+        kable_styling(bootstrap_options = c("striped","condensed")))
+  
+}
+```
