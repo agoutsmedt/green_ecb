@@ -5,53 +5,82 @@ eurosystem_text <- readRDS(here(data_path, "eurosystem_text.rds"))
 
 ####################### preparing text for topic modelling ####################
 
-term_list <- data.table(eurosystem_text) %>% 
-  unnest_tokens(word, text, token = "ngrams", n_min = 1, n = 3) %>% 
-  separate(word, into = c("word_1", "word_2", "word_3"), sep = " ") %>% 
-  mutate(unigram = is.na(word_2) & is.na(word_3),
-         bigram = !is.na(word_2) & is.na(word_3),
-         ngram = ifelse(unigram == TRUE, "unigram", NA),
-         ngram = ifelse(bigram == TRUE, "bigram", ngram),
-         ngram = ifelse(is.na(ngram), "trigram", ngram),
-         word_2 = ifelse(is.na(word_2), "", word_2),
-         word_3 = ifelse(is.na(word_3), "", word_3),
-#         word_1 = str_remove_all(word_1, paste0(remove_expressions, collapse = "|")),
-#         word_2 = str_remove_all(word_2, paste0(remove_expressions, collapse = "|")),
-#         word_3 = str_remove_all(word_3, paste0(remove_expressions, collapse = "|")),
-         word_1 = textstem::lemmatize_words(word_1),
-         word_2 = textstem::lemmatize_words(word_2),
-         word_3 = textstem::lemmatize_words(word_3)) %>%
-  filter(! str_detect(word_1, "[:digit:]"),
-         ! str_detect(word_2, "[:digit:]"),
-         ! str_detect(word_3, "[:digit:]"),
-         str_count(word_1) != 1,
-         str_count(word_2) != 1,
-         str_count(word_3) != 1) %>%
-  anti_join(stop_words, by = c("word_1" = "word")) %>% 
-  anti_join(stop_words, by = c("word_2" = "word")) %>% 
-  anti_join(stop_words, by = c("word_3" = "word")) %>% 
+stop_words_increased <- stop_words %>% 
+  rbind(data.frame("word" = stopwords::data_stopwords_nltk$en, lexicon = "nltk")) %>% 
+  rbind(data.frame("word" = stopwords::data_stopwords_stopwordsiso$en, lexicon = "iso"))
+
+to_keep <- c("research",
+             "announce",
+             "cause",
+             "causes",
+             "cases",
+             "computer",
+             "fact",
+             "facts",
+             "general",
+             "good",
+             "goods",
+             "group",
+             "groups",
+             "information",
+             "interest",
+             "invention",
+             "lower",
+             "member",
+             "members",
+             "uk",
+             "zero")
+
+stop_words_increased <- stop_words_increased %>%
+  filter(! word %in% to_keep) %>% 
+  select(word) %>% 
+  unique
+
+n_gram <- 3
+columns <- paste0("word_", 1:n_gram)
+
+term_list <- eurosystem_text %>% 
+  unnest_tokens(word, text, token = "ngrams", n_min = 1, n = n_gram) %>% 
+  as.data.table %>% 
+  .[, word := str_replace_all(word, "ﬁ", "fi")] %>% 
+  .[, (columns) := tstrsplit(word, " ")] %>% 
+  .[, `:=` (unigram = is.na(word_2) & is.na(word_3),
+            bigram = !is.na(word_2) & is.na(word_3))] %>% 
+  .[, ngram := ifelse(unigram == TRUE, "unigram", NA)] %>% 
+  .[, ngram := ifelse(bigram == TRUE, "bigram", ngram)] %>% 
+  .[, ngram := ifelse(is.na(ngram), "trigram", ngram)] %>% 
+  .[, `:=` (word_2 = ifelse(is.na(word_2), "", word_2),
+            word_3 = ifelse(is.na(word_3), "", word_3))] %>% 
+  .[, (columns) := map(.SD, lemmatize_words), .SDcols = columns] %>% 
+  .[, (columns) := map(.SD, ~str_remove(., "’.*")), .SDcols = columns] %>% 
+  filter(if_all(starts_with("word_"), ~ ! str_detect(., "[:digit:]")),
+         if_all(starts_with("word_"), ~ str_count(.) != 1)) %>%
+  anti_join(stop_words_increased, by = c("word_1" = "word")) %>% 
+  anti_join(stop_words_increased, by = c("word_2" = "word")) %>% 
+  anti_join(stop_words_increased, by = c("word_3" = "word")) %>% 
   unite(term, word_1, word_2, word_3, sep = " ") %>% 
-  mutate(term = str_trim(term, "both")) %>% 
-#  filter(! term %in% uninformative_words) %>% 
-  select(-unigram, -bigram) %>% 
-  data.table()
+  .[, term := str_trim(term, "both")] %>% 
+  .[, document_name := paste0(file, "_page", page)] %>% 
+  select(-word, -unigram, -bigram)
 
-remove_terms <- c("^_",
-                  "european central bank")
+to_remove <- c("www\\.",
+               "für$",
+               "^und$",
+               "^buch$",
+               "bundesbank\\.de",
+               "strasse")
 
-term_list <- term_list %>% 
-  mutate(term = str_replace_all(term, "ﬁ", "fi")) %>% 
-  filter(! str_detect(term, paste0(remove_terms, collapse = "|"))) %>% 
-  mutate(document_name = paste0(file, "_page", page))
-
-saveRDS(term_list, here(data_path,
+term_list_filtered <- term_list %>% 
+  filter(! str_detect(term, paste0(to_remove, collapse = "|")))
+         
+saveRDS(term_list_filtered, here(data_path,
                         "topic_modelling", 
                         "TM_term_list.rds")) 
 
 #' We will now produce different set of data depending on different filtering parameters:
 #' 
 hyper_grid <- expand.grid(
-  upper_share = c(0.4), # remove a word if it is appearing in more than upper_share% of the docs
+  upper_share = c(0.35), # remove a word if it is appearing in more than upper_share% of the docs
   lower_share = c(0.005, 0.01, 0.02), # remove a word if it is appearing in less than lower_share% of the docs
   min_word = 15, # the min number of words in a doc
   max_word = Inf, # the max number of words in a doc
@@ -61,12 +90,18 @@ hyper_grid <- expand.grid(
 #' feature selection criteria (listed in `hyper_grid`).
 
 data_set <- create_topicmodels_dataset(hyper_grid, 
-                                       term_list, 
+                                       term_list_filtered, 
                                        document_name = "document_name")
+data_set <- create_stm(data_set)
+  
 
 saveRDS(data_set, here(data_path, 
                        "topic_modelling",
                        "TM_data_set.rds"))
+
+#' We can create now the metadata
+#' 
+
 
 #' The second step is to use the different data sets to create stm objects and them to fit 
 #' topic models for different number of topics.
@@ -75,7 +110,6 @@ saveRDS(data_set, here(data_path,
 # setting up parallel process
 plan(multisession, workers = 2)
 
-data_set <- create_stm(data_set)
 topic_number <- seq(40, 110, 10) 
 many_models <- create_many_models(data_set, topic_number, max.em.its = 800, seed = 1989)
 
@@ -116,27 +150,46 @@ plot_topic_models$exclusivity_coherence_mean %>%
 # We can plot different number of topics to see what's the most intuitive results
 
 #' We plot the terms with the highest FREX value for each topic:
+#' `topic_model <- readRDS(here(data_path,"topic_modelling", "TM_50.rds"))`
+#' `data_set <- readRDS(here(data_path,"topic_modelling", "TM_data_set.rds"))`
 
-top_terms <- extract_top_terms(tuning_results[i],
-                               tuning_results[i]$data[[1]],
-                               nb_terms = 20,
+top_terms <- extract_top_terms(topic_model,
+                               data_set$data[[2]],
+                               nb_terms = 15,
                                frexweight = 0.3)
+k <- topic_model$settings$dim$K
 
-top_terms_graph <- top_terms %>%
-  filter(measure == "frex") %>% 
-  inner_join(topics_with_com[, c("id", "color", "Com_ID", "new_id", "com_color")], by = c("topic" = "id")) %>% 
+top_beta_graph <- top_terms %>%
+  ungroup() %>% 
+  filter(measure == "beta") %>% 
   mutate(topic = paste0("topic ", topic),
-         term = reorder_within(term, value, topic)) %>%
-  ggplot(aes(value, term)) +
-  scale_fill_identity() +
-  geom_col(aes(fill = com_color), show.legend = FALSE) +
-  facet_wrap(~ fct_reorder(topic, new_id), scales = "free") +
-  scale_y_reordered() +
-  coord_cartesian(xlim=c(0.96,1))
+         term = tidytext::reorder_within(term, value, topic)) %>%
+  ggplot(aes(value, term, fill = topic)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free", ncol = 9) +
+  scale_y_reordered()
 
-ragg::agg_png(here(tm_picture_path, glue("TM_top_terms_{i}topics.png")),
+
+ragg::agg_png(here("pictures", glue("TM_top_beta_{k}topics.png")),
               width = 50, height = 40, units = "cm", res = 300)
-top_terms_graph
+top_beta_graph
+invisible(dev.off())
+
+top_frex_graph <- top_terms %>%
+  ungroup() %>% 
+  filter(measure == "frex") %>% 
+  mutate(topic = paste0("topic ", topic),
+         term = tidytext::reorder_within(term, value, topic)) %>%
+  ggplot(aes(value, term, fill = topic)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free", ncol = 9) +
+  scale_y_reordered() +
+  coord_cartesian(xlim=c(0.98,1))
+
+
+ragg::agg_png(here("pictures", glue("TM_top_frex_{k}topics.png")),
+              width = 50, height = 40, units = "cm", res = 300)
+top_frex_graph
 invisible(dev.off())
 
 saveRDS(filter(tuning_results, preprocessing_id == 1, K == 50), 

@@ -1,6 +1,7 @@
 ############## Loading packages and data #####################
 
 package_list <- c("tidyverse",
+                  "lubridate",
                   "stringi",
                   "academictwitteR",
                   "glue",
@@ -8,12 +9,17 @@ package_list <- c("tidyverse",
                   "tidytext",
                   "tm",
                   "quanteda",
+                  "stopwords",
+                  "textstem",
                   "data.table",
                   "furrr",
                   "stm",
+                  "huge",
+                  "igraph",
                   "tidygraph",
                   "ggraph",
                   "ggalluvial",
+                  "scico",
                   "biblionetwork")
 
 for(package in package_list){

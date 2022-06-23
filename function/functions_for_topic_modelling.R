@@ -109,10 +109,10 @@ create_topicmodels_dataset <- function(tuning_parameters,
 #' 
 create_stm <- function(data, min_word_number = 200){ 
   data_set <- data %>% 
-    mutate(dfm = furrr::future_map(data, 
-                                   ~tidytext::cast_dfm(data = ., document, term, count_per_doc))) %>% 
-    mutate(stm = furrr::future_map(dfm, 
-                                   ~quanteda::convert(x = ., to = "stm")),
+    mutate(dfm = map(data, 
+                     ~tidytext::cast_dfm(data = ., document, term, count_per_doc))) %>% 
+    mutate(stm = map(dfm, 
+                     ~quanteda::convert(x = ., to = "stm")),
            preprocessing_id = row_number())
   
   list_document <- list()
@@ -141,19 +141,18 @@ create_stm <- function(data, min_word_number = 200){
 
 #' ## Creating several topic models for different preprocessing criteria and different number of topics
 #' 
-create_many_models <- function(data, nb_topics, max.em.its, seed, verbose = TRUE) {
+create_many_models <- function(data, nb_topics, ..., verbose = TRUE) {
   list_models <- list()
   for(i in 1:nrow(data_set)) {
     topic_model <- tibble(K = nb_topics) %>%
-      mutate(topic_model = furrr::future_map(K, 
-                                             ~stm(data$stm[[i]][[1]],
-                                                     data$stm[[i]][[2]],
-                                                     init.type = "Spectral",
-                                                     K = .,
-                                                     max.em.its = max.em.its,
-                                                     seed = seed),
-                                             .progress = TRUE,
-                                             .options = furrr_options(seed = seed)))
+      mutate(topic_model = map(K, 
+                               ~stm(data$stm[[i]][[1]],
+                                    data$stm[[i]][[2]],
+                                    init.type = "Spectral",
+                                    K = .,
+                                    ...),
+                               #                              .options = furrr_options(seed = seed),
+                               .progress = TRUE))
     list_models[[i]] <- topic_model 
     if(verbose == TRUE) {
       message(paste0("Topic Models for Preprocessing number", 
@@ -306,27 +305,28 @@ plot_topicmodels_stat <- function(data, size = 1, weight_1 = 0.5, weight_2 = 0.3
 #' Inspired by the STM package but a bit revisited to fit with our goals
 
 calculate_frex <- function(model, nb_terms = nb_terms, w = w) {
-logbeta <- model$beta$logbeta[[1]]
-
-col.lse <- function(mat) {
-  matrixStats::colLogSumExps(mat)
-}
-
-excl <- t(t(logbeta) - col.lse(logbeta))
-freqscore <- apply(logbeta,1,data.table::frank)/ncol(logbeta)
-exclscore <- apply(excl,1,data.table::frank)/ncol(logbeta)
-frex <- 1/(w/freqscore + (1-w)/exclscore)
-frex <- data.table("term" = model$vocab,
-                   as.data.table(frex)) %>% 
-  pivot_longer(cols = starts_with("V"), 
-               names_to = "topic", 
-               values_to = "frex") %>%
-  mutate(topic = as.integer(str_remove(topic, "V"))) %>% 
-  group_by(topic) %>% 
-  slice_max(frex, n = nb_terms) %>% 
-  select(topic, term, frex) %>% 
-  mutate(rank = row_number(),
-         mean = mean(frex))
+  logbeta <- model$beta$logbeta[[1]]
+  
+  col.lse <- function(mat) {
+    matrixStats::colLogSumExps(mat)
+  }
+  
+  excl <- t(t(logbeta) - col.lse(logbeta))
+  freqscore <- apply(logbeta,1,data.table::frank)/ncol(logbeta)
+  exclscore <- apply(excl,1,data.table::frank)/ncol(logbeta)
+  frex <- 1/(w/freqscore + (1-w)/exclscore)
+  frex <- data.table("term" = model$vocab,
+                     as.data.table(frex)) %>% 
+    pivot_longer(cols = starts_with("V"), 
+                 names_to = "topic", 
+                 values_to = "frex") %>%
+    mutate(topic = as.integer(str_remove(topic, "V"))) %>% 
+    group_by(topic) %>% 
+    arrange(-frex) %>% 
+    slice(1:nb_terms) %>% 
+    select(topic, term, frex) %>% 
+    mutate(rank = row_number(),
+           mean = mean(frex))
 }
 
 #' Calculate Frex mean
@@ -344,7 +344,8 @@ calculate_beta <- function(model, nb_terms = 10) {
   beta_value <- tidytext::tidy(model, matrix = "beta") %>% 
     filter(! is.na(topic) & ! is.na(term)) %>% 
     group_by(topic) %>% 
-    slice_max(beta, n = nb_terms) %>% 
+    arrange(-beta) %>% 
+    slice(1:nb_terms) %>% 
     mutate(rank = row_number())
 }
 
@@ -362,7 +363,8 @@ calculate_score <- function(model, nb_terms = 10) {
                  values_to = "score") %>% 
     mutate(topic = as.integer(str_remove(topic, "V"))) %>% 
     group_by(topic) %>% 
-    slice_max(score, n = nb_terms) %>% 
+    arrange(-score) %>% 
+    slice(1:nb_terms) %>% 
     select(topic, term, score) %>% 
     mutate(rank = row_number())
 }
@@ -382,7 +384,8 @@ calculate_lift <- function(model, list_terms, nb_terms = 10) {
                  values_to = "lift") %>%
     mutate(topic = as.integer(str_remove(topic, "V"))) %>% 
     group_by(topic) %>% 
-    slice_max(lift, n = nb_terms) %>% 
+    arrange(-lift) %>% 
+    slice(1:nb_terms) %>% 
     select(topic, term, lift) %>% 
     mutate(rank = row_number())
 }
@@ -417,18 +420,18 @@ extract_top_terms <- function(model, list_terms, nb_terms = 10, frexweight = 0.5
 #' > Deprecated
 
 plot_beta_value <- function(model, nb_terms = 10){
-beta_top_terms <- tidytext::tidy(model, matrix = "beta") %>% 
+  beta_top_terms <- tidytext::tidy(model, matrix = "beta") %>% 
     group_by(topic) %>%
     slice_max(beta, n = nb_terms) %>% 
     ungroup() %>%
     arrange(topic, -beta)
-
-beta_top_terms %>%
-  mutate(term = reorder_within(term, beta, topic)) %>%
-  ggplot(aes(beta, term, fill = factor(topic))) +
-  geom_col(show.legend = FALSE) +
-  facet_wrap(~ topic, scales = "free") +
-  scale_y_reordered() 
+  
+  beta_top_terms %>%
+    mutate(term = reorder_within(term, beta, topic)) %>%
+    ggplot(aes(beta, term, fill = factor(topic))) +
+    geom_col(show.legend = FALSE) +
+    facet_wrap(~ topic, scales = "free") +
+    scale_y_reordered() 
 }
 
 #' ## Extract top terms for different measures
@@ -441,29 +444,29 @@ beta_top_terms %>%
 #' > Deprecated
 
 extract_top_terms_old <- function(model, 
-                              nb_words = 20, 
-                              weight_frex = 0.4){
-terms <- stm::labelTopics(model, n = nb_words, frexweight = weight_frex)
-top_terms <- data.table("topic" = rep(1:model$settings$dim$K, each = nb_words),
-                        "rank" = 1:nb_words)
-
-if(length(terms$topics) == 0)
-for(i in names(terms)[-5]){
-  terms_per_stat <- as.data.frame(terms[[i]]) %>% 
-    mutate(topic = row_number()) %>% 
-    pivot_longer(cols = starts_with("V"), names_to = "rank", values_to = i) %>% 
-    mutate(rank = as.integer(str_remove(rank, "V"))) 
+                                  nb_words = 20, 
+                                  weight_frex = 0.4){
+  terms <- stm::labelTopics(model, n = nb_words, frexweight = weight_frex)
+  top_terms <- data.table("topic" = rep(1:model$settings$dim$K, each = nb_words),
+                          "rank" = 1:nb_words)
   
-  top_terms <- merge(top_terms, terms_per_stat, by = c("topic", "rank"))
-} else {
-  top_terms <- as.data.frame(terms$topics) %>% 
-    mutate(topic = row_number()) %>% 
-    pivot_longer(cols = starts_with("V"), names_to = "rank", values_to = "frex") %>% 
-    mutate(rank = as.integer(str_remove(rank, "V"))) %>% 
-    filter(! frex == "") %>% 
-    as.data.table()
-}
-return(top_terms)
+  if(length(terms$topics) == 0)
+    for(i in names(terms)[-5]){
+      terms_per_stat <- as.data.frame(terms[[i]]) %>% 
+        mutate(topic = row_number()) %>% 
+        pivot_longer(cols = starts_with("V"), names_to = "rank", values_to = i) %>% 
+        mutate(rank = as.integer(str_remove(rank, "V"))) 
+      
+      top_terms <- merge(top_terms, terms_per_stat, by = c("topic", "rank"))
+    } else {
+      top_terms <- as.data.frame(terms$topics) %>% 
+        mutate(topic = row_number()) %>% 
+        pivot_longer(cols = starts_with("V"), names_to = "rank", values_to = "frex") %>% 
+        mutate(rank = as.integer(str_remove(rank, "V"))) %>% 
+        filter(! frex == "") %>% 
+        as.data.table()
+    }
+  return(top_terms)
 }
 
 #' ## Naming topics
@@ -495,37 +498,37 @@ ggraph_topic_correlation <- function(model,
                                      size_label = 4,
                                      nb_topics = NULL,
                                      resolution = 1){
-correlation <- topicCorr(model, method = method)
-
-if(is.null(nodes)){
-nodes <- name_topics(top_terms, "frex", nb_word = 4)
-}
-
-edges <- as.data.frame(as.matrix(correlation$poscor)) %>% 
-  mutate(from = row_number()) %>% 
-  pivot_longer(cols = 1:nb_topics, names_to = "to", values_to = "weight") %>% 
-  mutate(to = str_remove(to, "V"),
-         from = as.character(from)) %>% 
-  filter(weight != 0) %>% 
-  unique()
-
-nodes <- nodes %>% 
-  mutate(id = as.character(id))
-
-graph_corr <- tbl_graph(nodes = nodes, edges = edges, directed = FALSE)
-graph_corr <- leiden_workflow(graph_corr, res_1 = resolution, niter = 3000)
-graph_corr <- community_colors(graph_corr, palette = scico(n = length(unique((V(graph_corr)$Com_ID))), palette = "roma", begin = 0.1))
-graph_corr <- vite::complete_forceatlas2(graph_corr, first.iter = 5000)
-graph_plot <- ggraph(graph_corr, layout = "manual", x = x, y = y) +
-  geom_edge_arc0(aes(color = color_edges, width = weight), strength = 0.3, alpha = 0.8, show.legend = FALSE) +
-  scale_edge_width_continuous(range = c(0.5,12)) +
-  scale_edge_colour_identity() +
-  scale_fill_identity() +
-  geom_node_label(aes(label = topic_name, fill = color), size = size_label, alpha = 0.7)
-
-list <- list("graph" = graph_corr,
-             "plot" = graph_plot)
-return(list)
+  correlation <- topicCorr(model, method = method)
+  
+  if(is.null(nodes)){
+    nodes <- name_topics(top_terms, "frex", nb_word = 4)
+  }
+  
+  edges <- as.data.frame(as.matrix(correlation$poscor)) %>% 
+    mutate(from = row_number()) %>% 
+    pivot_longer(cols = 1:nb_topics, names_to = "to", values_to = "weight") %>% 
+    mutate(to = str_remove(to, "V"),
+           from = as.character(from)) %>% 
+    filter(weight != 0) %>% 
+    unique()
+  
+  nodes <- nodes %>% 
+    mutate(id = as.character(id))
+  
+  graph_corr <- tbl_graph(nodes = nodes, edges = edges, directed = FALSE)
+  graph_corr <- leiden_workflow(graph_corr, res_1 = resolution, niter = 3000)
+  graph_corr <- community_colors(graph_corr, palette = scico(n = length(unique((V(graph_corr)$Com_ID))), palette = "roma", begin = 0.1))
+  graph_corr <- vite::complete_forceatlas2(graph_corr, first.iter = 5000)
+  graph_plot <- ggraph(graph_corr, layout = "manual", x = x, y = y) +
+    geom_edge_arc0(aes(color = color_edges, width = weight), strength = 0.3, alpha = 0.8, show.legend = FALSE) +
+    scale_edge_width_continuous(range = c(0.5,12)) +
+    scale_edge_colour_identity() +
+    scale_fill_identity() +
+    geom_node_label(aes(label = topic_name, fill = color), size = size_label, alpha = 0.7)
+  
+  list <- list("graph" = graph_corr,
+               "plot" = graph_plot)
+  return(list)
 }
 
 #' ## Plot topic frequency
@@ -538,8 +541,8 @@ plot_frequency <- function(topics_data, model, palette = color){
   topics_data$topic <- factor(topics_data$topic, levels = topics_data[order(frequency)]$topic)
   
   ggplot(topics_data, aes(x = frequency, y = topic,
-                     group = factor(topic_name),
-                     color = {{palette}})) +
+                          group = factor(topic_name),
+                          color = {{palette}})) +
     geom_segment(aes(x = 0, xend = frequency, yend = topic), size = 4, show.legend = FALSE) +
     theme(legend.position = "none") +
     geom_label(aes(x = frequency, color = {{palette}}, label = term_label), size = 4, alpha = 1, hjust = -0.01) +
