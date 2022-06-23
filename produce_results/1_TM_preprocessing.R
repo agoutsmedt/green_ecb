@@ -1,7 +1,8 @@
 source("packages_and_data.R")
 source("function/functions_for_topic_modelling.R")
 eurosystem_metadata <- readRDS(here(data_path, "eurosystem_metadata.rds"))
-eurosystem_text <- readRDS(here(data_path, "eurosystem_text.rds"))
+eurosystem_text <- readRDS(here(data_path, "eurosystem_text.rds")) %>% 
+  mutate(document_name = paste0(file, "_page", page))
 
 ####################### preparing text for topic modelling ####################
 
@@ -93,25 +94,56 @@ data_set <- create_topicmodels_dataset(hyper_grid,
                                        term_list_filtered, 
                                        document_name = "document_name")
 data_set <- create_stm(data_set)
+
+
+#' We can create now the metadata
+#' 
+
+metadata_to_join <- eurosystem_metadata %>% 
+  select(file = file_name, central_bank, year) %>% 
+  left_join(select(eurosystem_text, document_name, file))
   
+metadata_to_join <- metadata_to_join %>% 
+  ungroup() %>% 
+  left_join(metadata_to_join) %>% 
+  select(document_name, central_bank, year) %>% 
+  unique
+
+for(i in 1:nrow(data_set)){
+  metadata <- data.table("document_name" = names(data_set$stm[[i]]$documents))
+  
+  metadata <- metadata %>% 
+    left_join(metadata_to_join) 
+    
+  data_set$stm[[i]]$meta$year <- as.integer(metadata$year)
+  data_set$stm[[i]]$meta$central_bank <- metadata$central_bank
+}
 
 saveRDS(data_set, here(data_path, 
                        "topic_modelling",
                        "TM_data_set.rds"))
 
-#' We can create now the metadata
-#' 
-
-
+#' `data_set <- readRDS(here(data_path, "topic_modelling", "TM_data_set.rds"))`
 #' The second step is to use the different data sets to create stm objects and them to fit 
 #' topic models for different number of topics.
 #' 
 
-# setting up parallel process
-plan(multisession, workers = 2)
+topic_model <- searchK(data_set$stm[[i]]$documents,
+                       data_set$stm[[i]]$vocab,
+                       prevalence = ~s(year)+central_bank,
+                       content = ~central_bank,
+                       data = data_set$stm[[i]]$meta,
+                       K = 0,
+                       emtol = 1e-04,
+                       ngroups = 4)
 
-topic_number <- seq(40, 110, 10) 
-many_models <- create_many_models(data_set, topic_number, max.em.its = 800, seed = 1989)
+plot(topic_model)
+
+# setting up parallel process
+#plan(multisession, workers = 2)
+
+#topic_number <- seq(40, 110, 10) 
+#many_models <- create_many_models(data_set, topic_number, max.em.its = 800, seed = 1989)
 
 #' The third step is to calculate different statistics for each model and produce 
 #' different plots summarising these statistics.
