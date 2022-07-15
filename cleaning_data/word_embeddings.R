@@ -14,17 +14,33 @@ bis_text <- readRDS(here(bis_data_path,
 #eurosystem_metadata <- readRDS(here(data_path, "eurosystem_metadata.rds"))
 #eurosystem_text <- readRDS(here(data_path, "eurosystem_text.rds"))
 
-####################### trying word embedding with the Supervised Machine Learning Textbook ####################
 
-term_list <- eurosystem_text %>% 
-  unnest_tokens(word, text, token = "words") %>% 
+#################### Cleaning Vocabulary ############################
+n_gram <- 2
+columns <- paste0("word_", 1:n_gram)
+
+term_list <- bis_text %>% 
+  unnest_tokens(word, text, token = "ngrams", n_min = 1, n = n_gram) %>% 
   as.data.table %>% 
-  anti_join(stop_words) %>% 
-  mutate(term = lemmatize_words(word),
-         document = paste0(file, "_page", page)) %>% 
-  add_count(term) %>% 
-  filter(n >= 10) %>% 
+  .[, word := str_replace_all(word, "ﬁ", "fi")] %>% 
+  .[, (columns) := tstrsplit(word, " ")] %>% 
+  .[, `:=` (word_2 = ifelse(is.na(word_2), "", word_2))] %>% 
+  .[, (columns) := map(.SD, lemmatize_words), .SDcols = columns] %>% 
+  .[, (columns) := map(.SD, ~str_remove(., "’.*")), .SDcols = columns] %>% 
+  filter(if_all(starts_with("word_"), ~ ! str_detect(., "[:digit:]")),
+         if_all(starts_with("word_"), ~ str_count(.) != 1)) %>%
+  anti_join(stop_words, by = c("word_1" = "word")) %>% 
+  anti_join(stop_words, by = c("word_2" = "word")) %>% 
+  unite(term, contains("word_"), sep = " ") %>% 
+  .[, term := str_trim(term, "both")] %>%  
+  .[, document := paste0(file, "_page", page)] %>% 
   select(document, term)
+
+saveRDS(term_list, here(data_path,
+                        "word_embedding", 
+                        "term_list_we.rds"))
+
+####################### trying word embedding with the Supervised Machine Learning Textbook ####################
 
 nested_words <- term_list %>% 
   as_tibble %>% 
@@ -52,7 +68,7 @@ slide_windows <- function(tbl, window_size) {
     bind_rows()
 }
 
-plan(multisession)  ## for parallel processing
+# plan(multisession)  ## for parallel processing
 
 tidy_pmi <- nested_words %>%
   mutate(terms = map(terms, slide_windows, 4L)) %>%
@@ -67,8 +83,8 @@ tidy_word_vectors <- tidy_pmi %>%
   )
 
 saveRDS(tidy_word_vectors, here(data_path,
-             "word_embedding", 
-             "word_vectors_tidytext.rds"))
+                                "word_embedding", 
+                                "word_vectors_tidytext.rds"))
 
 nearest_neighbors <- function(df, token) {
   df %>%
@@ -86,26 +102,7 @@ nearest_neighbors <- function(df, token) {
 }
 
 tidy_word_vectors %>%
-  nearest_neighbors("research")
-
-tidy_word_vectors %>%
-  filter(dimension <= 24) %>%
-  group_by(dimension) %>%
-  top_n(12, abs(value)) %>%
-  ungroup() %>%
-  mutate(item1 = reorder_within(item1, value, dimension)) %>%
-  ggplot(aes(item1, value, fill = dimension)) +
-  geom_col(alpha = 0.8, show.legend = FALSE) +
-  facet_wrap(~dimension, scales = "free_y", ncol = 4) +
-  scale_x_reordered() +
-  coord_flip() +
-  labs(
-    x = NULL,
-    y = "Value",
-    title = "First 24 principal components for text of CFPB complaints",
-    subtitle = paste("Top words contributing to the components that explain",
-                     "the most variation")
-  )
+  nearest_neighbors("growth") %>% View()
 
 word_matrix <- term_list %>% 
   count(document, term) %>%
@@ -120,71 +117,70 @@ dim(doc_matrix)
 
 ####################### trying word embedding with word2vec ####################
 corpus <- term_list %>% 
-  mutate(document = str_remove(document, "(?<=_).*")) %>% 
   .[, text := paste0(term, collapse = " "), by = "document"] %>% 
   select(doc_id = document, text) %>% 
   unique
-model <- word2vec::word2vec(corpus$text, type = "cbow", window = 10, dim = 100, iter = 100, min_count = 10)
-predict(model, "research", type = "nearest", top_n = 20)
+model <- word2vec::word2vec(corpus$text, type = "cbow", window = 6, dim = 100, iter = 100, min_count = 10)
 word2vec::write.word2vec(model, here(data_path,
                            "word_embedding", 
                            "word_vectors_word2vec.bin"))
+predict(model, "research", type = "nearest", top_n = 20)
 
-embedding <- as.matrix(model)
-library(uwot)
-viz <- uwot::umap(embedding, n_neighbors = 15, n_threads = 2)
-rownames(viz) <- rownames(embedding)
-head(viz, n = 10)
+#embedding <- as.matrix(model)
+#library(uwot)
+#viz <- uwot::umap(embedding, n_neighbors = 15, n_threads = 2)
+#rownames(viz) <- rownames(embedding)
+#head(viz, n = 10)
 
-library(ggplot2)
-df <- data.frame(word = rownames(viz),
-                 x = viz[, 1], y = viz[, 2],
-                 stringsAsFactors = FALSE)
-p <- ggplot(df, aes(x = x, y = y, label = word)) +
-  ggrepel::geom_text_repel(size = 1, max.overlaps = 100) + 
-  theme_void()
-ggsave("test.png", p, device = ragg::agg_png(), width = 50, height = 50, units = "cm")
+#library(ggplot2)
+#df <- data.frame(word = rownames(viz),
+ #                x = viz[, 1], y = viz[, 2],
+  #               stringsAsFactors = FALSE)
+#p <- ggplot(df, aes(x = x, y = y, label = word)) +
+ # ggrepel::geom_text_repel(size = 1, max.overlaps = 100) + 
+  #theme_void()
+#ggsave("test.png", p, device = ragg::agg_png(), width = 50, height = 50, units = "cm")
 
 
-corpus$text <- word2vec::txt_clean_word2vec(corpus$text, ascii = TRUE, alpha = TRUE, tolower = TRUE, trim = TRUE)
-model <- doc2vec::paragraph2vec(x = corpus, type = "PV-DBOW",
-                       dim = 10, iter = 10, min_count = 10, lr = 0.05, threads = 2)
-predict(model,
-        newdata = "keynesian",
-        type = "nearest", which = "word2word", top_n = 10)
+#corpus$text <- word2vec::txt_clean_word2vec(corpus$text, ascii = TRUE, alpha = TRUE, tolower = TRUE, trim = TRUE)
+#model <- doc2vec::paragraph2vec(x = corpus, type = "PV-DBOW",
+ #                      dim = 10, iter = 10, min_count = 10, lr = 0.05, threads = 2)
+#predict(model,
+ #       newdata = "keynesian",
+  #      type = "nearest", which = "word2word", top_n = 10)
 
-sentences <- c("climate change", "new keynesian") 
-sentences <- setNames(sentences, sentences) 
-sentences <- strsplit(sentences, split = " ")
-predict(model, newdata = sentences, type = "nearest", which = "sent2doc", top_n = 7)
+#sentences <- c("climate change", "new keynesian") 
+#sentences <- setNames(sentences, sentences) 
+#sentences <- strsplit(sentences, split = " ")
+#predict(model, newdata = sentences, type = "nearest", which = "sent2doc", top_n = 7)
 
-text <- c("r220317b_")
-predict(model,
-        newdata = text,
-        type = "nearest", which = "doc2doc", top_n = 30)
+#text <- c("r220317b_")
+#predict(model,
+ #       newdata = text,
+  #      type = "nearest", which = "doc2doc", top_n = 30)
 
 ####################### trying word embedding with golgotha ####################
 
-library(golgotha)
-transformer_download_model("distilbert-base-multilingual-cased", architecture = "DistilBERT")
-model <- transformer("bert-base-multilingual-uncased")
-bert <- hf_load_model("bert-base-multilingual-uncased")
-distilBERT <- hf_load_model("distilbert-base-uncased-finetuned-sst-2-english")
+#library(golgotha)
+#transformer_download_model("distilbert-base-multilingual-cased", architecture = "DistilBERT")
+#model <- transformer("bert-base-multilingual-uncased")
+#bert <- hf_load_model("bert-base-multilingual-uncased")
+#distilBERT <- hf_load_model("distilbert-base-uncased-finetuned-sst-2-english")
 
-model <- golgotha::transformer("bert-base-multilingual-uncased")
-x <- data.frame(doc_id = c("doc_1", "doc_2"),
-                text = c("give me back my money or i'll call the police.",
-                         "talk to the hand because the face don't want to hear it any more."),
-                stringsAsFactors = FALSE)
-embedding <- predict(model, x, type = "embed-sentence")
-embedding <- predict(model, x, type = "embed-token")
-tokens    <- predict(model, x, type = "tokenise")
+#model <- golgotha::transformer("bert-base-multilingual-uncased")
+#x <- data.frame(doc_id = c("doc_1", "doc_2"),
+#                text = c("give me back my money or i'll call the police.",
+ #                        "talk to the hand because the face don't want to hear it any more."),
+  #              stringsAsFactors = FALSE)
+#embedding <- predict(model, x, type = "embed-sentence")
+#embedding <- predict(model, x, type = "embed-token")
+#tokens    <- predict(model, x, type = "tokenise")
 
-
+###################### trying word embedding with keras ####################
 reticulate::use_condaenv("r-reticulate")
 
 library(keras)
-texts <- iconv(eurosystem_text$text, to = "UTF-8")
+texts <- iconv(corpus$text, to = "UTF-8")
 tokenizer <- text_tokenizer(num_words = 20000)
 tokenizer %>% fit_text_tokenizer(texts)
 
@@ -238,8 +234,12 @@ model %>% compile(loss = "binary_crossentropy", optimizer = "adam")
 model %>%
   fit_generator(
     skipgrams_generator(texts, tokenizer, skip_window, negative_samples), 
-    steps_per_epoch = 10000, epochs = 1
+    steps_per_epoch = 1000, epochs = 5
   )
+
+model %>% save_model_tf(here(data_path,
+                             "word_embedding", 
+                             "word_vectors_neuralnetwork.bin"))
 
 embedding_matrix <- get_weights(model)[[1]]
 words <- data_frame(
