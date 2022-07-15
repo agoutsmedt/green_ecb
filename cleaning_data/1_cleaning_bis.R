@@ -92,7 +92,12 @@ eurosystem_text_cleaned <- eurosystem_text_cleaned %>%
   group_by(file, page) %>% 
   mutate(text = paste0(text, collapse = " ")) %>% 
   select(-c(length, problems, en_tete)) %>% 
-  unique
+  unique %>% 
+  mutate(document_name = paste0(file, "_page", page)) %>% 
+  arrange(document_name)
+
+eurosystem_metadata <- eurosystem_metadata %>% 
+  arrange(file_name)
 
 saveRDS(eurosystem_metadata, here(data_path, "eurosystem_metadata.rds"))
 saveRDS(eurosystem_text_cleaned, here(data_path, "eurosystem_text.rds"))

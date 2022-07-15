@@ -1,27 +1,27 @@
+############ Loading packages and files #########################
+
 source("packages_and_data.R")
 source("function/functions_for_topic_modelling.R")
 eurosystem_metadata <- readRDS(here(data_path, "eurosystem_metadata.rds"))
 eurosystem_text <- readRDS(here(data_path, "eurosystem_text.rds"))
-topic_model <- readRDS(here(data_path,"topic_modelling", "TM_50.rds"))
+nb_topics <- 100
+topic_model <- readRDS(here(data_path,"topic_modelling", paste0("TM_", nb_topics, ".rds")))
 chosen_topic_model <- readRDS(here(data_path, "topic_modelling", "TM_data_set.rds")) %>% 
-  filter(preprocessing_id == 2)
-nb_topics <- topic_model$settings$dim$K
+  filter(preprocessing_id == 1)
 
-stm_data <- chosen_topic_model$stm[[1]]
 doc_pages <- chosen_topic_model$data[[1]] %>% 
   select(document, page, file) %>% 
-  unique
+  unique %>% 
+  left_join(rename(eurosystem_metadata, "file" = file_name)) 
 
-metadata <- data.table("document" = names(stm_data$documents)) %>% 
+metadata <- data.table("document" = rownames(chosen_topic_model$dfm[[1]])) %>% 
   left_join(doc_pages) %>% 
-  left_join(rename(eurosystem_metadata, "file" = file_name)) %>% 
   mutate(date = dmy(date),
          quarter = quarter(date),
          semester = semester(date))
 
 metadata_with_text <- metadata %>% 
   left_join(eurosystem_text)
-
 
 #' We can use the stm package function to plot some descriptive visualisations.
 #' For certain visualisations, we can extract the data to use ggplot/ggraph.
@@ -30,9 +30,9 @@ metadata_with_text <- metadata %>%
 #' This data.frame can also be used to give name to the topics. We will use it
 #' for the nodes of the topic correlation network.
 
-top_terms <- extract_top_terms(topic_model,
-                               chosen_topic_model$data[[1]],
-                               nb_terms = 30,
+top_terms <- extract_top_terms(model = topic_model,
+                               list_terms = chosen_topic_model$data[[1]],
+                               nb_terms = 20,
                                frexweight = 0.5)
 
 #' We will use this table for exploration
@@ -52,7 +52,7 @@ set.seed(1989)
 topic_corr_network <- ggraph_topic_correlation(topic_model, 
                                                nodes = topics,
                                                method = "huge", 
-                                               size_label = 2,
+                                               size_label = 1.2,
                                                nb_topics = nb_topics,
                                                resolution = 1.4) 
 
@@ -70,13 +70,14 @@ topics <- merge(topics, communities, by = "topic") %>%
 
 community_name <- tribble(
   ~Com_ID, ~Com_name,
-  "04", "Prudential Policy",
-  "02", "ECB role, research & European Integration",
-  "03", "Price Stability & Growth",
-  "07", "Financial Supervision",
-  "05", "Fiscal Policy & Structural Reforms",
+  "03", "Fiscal & National Policies",
+  "02", "Financial Stability",
+  "04", "CB Challenges & Communication",
+  "07", "Communication & Research",
   "06", "Varia",
-  "08", "Credition conditions & Asset purchase"
+  "05", "Macro Policy",
+  "08", "International Issues",
+  "09", "Financial Issues"
 )
 
 #' #### Plotting network with communities
@@ -101,8 +102,8 @@ graph_plot <- ggraph(network, layout = "manual", x = x, y = y) +
   theme_void()
 
 ragg::agg_png(here("pictures", "TM_topic_correlation.png"), 
-              width = 40, 
-              height = 30, 
+              width = 50, 
+              height = 40, 
               units = "cm", 
               res = 300)
 graph_plot
@@ -123,8 +124,10 @@ topics_with_com <- topics_with_com %>%
 
 #' We plot the terms with the highest FREX value for each topic:
 
+for(method in c("frex","beta")){
 top_terms_graph <- top_terms %>%
-  filter(measure == "frex") %>% 
+  filter(measure == method,
+         rank <= 18) %>% 
   inner_join(topics_with_com[, c("id", "color", "Com_ID", "new_id", "com_color")], by = c("topic" = "id")) %>% 
   mutate(topic = paste0("topic ", topic),
          term = reorder_within(term, value, topic)) %>%
@@ -132,26 +135,20 @@ top_terms_graph <- top_terms %>%
   scale_fill_identity() +
   geom_col(aes(fill = com_color), show.legend = FALSE) +
   facet_wrap(~ fct_reorder(topic, new_id), scales = "free") +
-  scale_y_reordered() +
-  coord_cartesian(xlim=c(0.96,1))
+  scale_y_reordered()
 
-ragg::agg_png(here("pictures", "TM_top_terms.png"),
-              width = 50, height = 40, units = "cm", res = 300)
-top_terms_graph
-invisible(dev.off())
+ggsave(here("pictures", paste0("TM_top_terms_", method, ".png")), 
+       top_terms_graph, 
+       device = ragg::agg_png, width = 60, height = 50, units = "cm") 
+}
 
 #' We now plot the frequency of each topics:
 #' 
 
 plotting_frequency <- plot_frequency(topics_with_com, topic_model, com_color)
-
-ragg::agg_png(here("pictures", "TM_topic_prevalence.png"), 
-              width = 40, 
-              height = 40, 
-              units = "cm", 
-              res = 300)
-plotting_frequency
-invisible(dev.off())
+ggsave(here("pictures", "TM_topic_prevalence.png"), 
+       plotting_frequency, 
+       device = ragg::agg_png, width = 40, height = 40, units = "cm") 
 
 #' We add the frequency value of each topic:
 #' 
@@ -179,10 +176,22 @@ topic_examples <- topics_complete %>%
                                           topics = .x)$docs[[1]])) %>% 
   unnest(examples)
 
+test <- findThoughts(topic_model, 
+             texts = metadata_with_text$text,
+             n = 4, 
+             topics = 5)
+
+eurosystem_text[test$index[[1]],] %>% View()
+
+eurosystem_text$document_name[test$index[[1]]]
+metadata_with_text$document[test$index[[1]]]
+
 saveRDS(topic_examples, here(data_path,
                              "topic_modelling",
                              "TM_Topic_examples.rds"))
 
+tibble(V1 = names(stm_data$documents), V3 = names(chosen_topic_model$stm[[1]]$documents)) %>% 
+  filter(V1 != V2)
 #' # Topics according to our variables of interest
 #' 
 #' ## Extracting the data from the topic model
@@ -190,7 +199,9 @@ saveRDS(topic_examples, here(data_path,
 #' We extract the gamma table: the table that associates each document to each topic with
 #' a certain gamma value (a kind of rate of belonging).
 
-topic_gamma <- tidy(topic_model, matrix = "gamma") 
+topic_gamma <- tidy(topic_model, 
+                    matrix = "gamma",
+                    document_names = rownames(chosen_topic_model$dfm[[1]])) 
 topic_gamma <- topic_gamma %>% 
   left_join(select(topics_complete, id, topic_name), by = c("topic" = "id")) %>% 
   select(-topic) %>% 
@@ -200,7 +211,6 @@ topic_gamma <- topic_gamma %>%
 topic_gamma_widered <- pivot_wider(topic_gamma,
                                    names_from = topic_name, 
                                    values_from = gamma) %>% 
-  mutate(document = names(stm_data$documents)) %>% 
   inner_join(metadata) %>%
   select(document, page, title, speaker_cleaned, central_bank, year, quarter, semester, pdf_link, contains("Topic")) %>% 
   as.data.table()
@@ -236,12 +246,12 @@ topic_diff <- copy(topic_gamma_attributes) %>%
 
 
 topic_diff <- topic_diff[, mean_cb := mean(gamma), by = c("topic_name", "central_bank_filtered")] %>% 
-  .[, mean_year := mean(gamma), by = c("topic_name", "year")] %>% 
-  .[, mean_semester := mean(gamma), by = c("topic_name", "semester")] %>% 
-  .[, mean_quarter := mean(gamma), by = c("topic_name", "quarter")] %>% 
-  .[, mean_year_cb := mean(gamma), by = c("topic_name", "central_bank_filtered", "year")] %>% 
-  .[, mean_semester_cb := mean(gamma), by = c("topic_name", "central_bank_filtered", "semester")] %>% 
-  .[, mean_quarter_cb := mean(gamma), by = c("topic_name", "central_bank_filtered", "quarter")] %>% 
+  .[, mean_year := mean(gamma), by = c("topic", "year")] %>% 
+  .[, mean_semester := mean(gamma), by = c("topic", "year", "semester")] %>% 
+  .[, mean_quarter := mean(gamma), by = c("topic", "year", "quarter")] %>% 
+  .[, mean_year_cb := mean(gamma), by = c("topic", "central_bank_filtered", "year")] %>% 
+  .[, mean_semester_cb := mean(gamma), by = c("topic", "central_bank_filtered", "year", "semester")] %>% 
+  .[, mean_quarter_cb := mean(gamma), by = c("topic", "central_bank_filtered", "year", "quarter")] %>% 
   select(central_bank_filtered, year, semester, quarter, topic_name, topic, new_id, contains("mean")) %>% 
   unique %>% 
   left_join(select(topics_complete, new_id, Com_name, com_color, topic_prevalence)) %>% 
@@ -253,24 +263,33 @@ topic_diff <- topic_diff[, mean_cb := mean(gamma), by = c("topic_name", "central
 
 #' # Producing graphs
 #' 
-topic_of_interest <- c(17,
-                    #   13, 
-                    #   6, 
-                       31, 
-                       33)
+topic_of_interest <- c(5,
+                       16, 
+                  #     32,
+                       40, 
+                       57,
+                   #    59,
+                       70,
+                       91)
+
 topic_diff_filtered <- topic_diff %>% 
   filter(topic %in% paste0("Topic ", topic_of_interest)) %>% 
-  mutate(month = ifelse(str_extract(semester, "\\d$") == "1", 1, 6),
-         year = str_extract(semester, "^\\d+"),
-         date = paste0(year, "-", month) %>% ym())
+  mutate(year = as.integer(year)) %>% 
+  mutate(month_semester = ifelse(semester == "1", 6, 12),
+         date_semester = paste0(year, "-", month_semester) %>% ym(),
+         month_quarter = case_when(quarter == "1" ~ 3,
+                                   quarter == "2" ~ 6,
+                                   quarter == "3" ~ 9,
+                                   quarter == "4" ~ 12),
+         date_quarter = paste0(year, "-", month_quarter) %>% ym())
 
 topic_year <- topic_diff_filtered %>% 
-  select(topic_name, topic, order, date, mean_semester) %>% 
+  select(topic_name, topic, order, date_quarter, mean_quarter) %>% 
   unique
 
-plot_topic_year <- ggplot(topic_year, aes(date, mean_semester, color = fct_reorder(topic_name, order))) + 
+plot_topic_year <- ggplot(topic_year, aes(date_quarter, mean_quarter, color = fct_reorder(topic_name, order))) + 
   geom_point(alpha = 0.6) +
-  geom_smooth(se = FALSE, span = 0.4, size = 2, alpha = 0.9) +
+  geom_smooth(se = FALSE, span = 0.5, size = 2, alpha = 0.9) +
   scale_color_scico_d(palette = "roma",
                       name = NULL) +
   theme_bw(base_size = 14) + 
@@ -280,23 +299,19 @@ plot_topic_year <- ggplot(topic_year, aes(date, mean_semester, color = fct_reord
        y = NULL) +
   guides(color = guide_legend (nrow=2, byrow=TRUE))
 
-ragg::agg_png(here("pictures", "topic_prevalence_over_time.png"), 
-              width = 35, 
-              height = 30, 
-              units = "cm", 
-              res = 300)
-plot_topic_year
-invisible(dev.off())
+ggsave(here("pictures", "topic_prevalence_over_time.png"), 
+       plot_topic_year, 
+       device = ragg::agg_png, width = 35, height = 30, units = "cm") 
 
 topic_year_cb <- topic_diff_filtered %>% 
   filter(! central_bank_filtered %in% c("other central banks"),
          ! str_detect(central_bank_filtered, "ireland")) %>% 
-  select(topic_name, topic, order, date, central_bank_filtered, mean_semester_cb) %>% 
+  select(topic_name, topic, order, date_quarter, central_bank_filtered, mean_quarter_cb) %>% 
   unique
 
-plot_topic_year_cb <- ggplot(topic_year_cb, aes(date, mean_semester_cb, color = fct_reorder(topic_name, order))) + 
+plot_topic_year_cb <- ggplot(topic_year_cb, aes(date_quarter, mean_quarter_cb, color = fct_reorder(topic_name, order))) + 
   geom_point(alpha = 0.6) +
-  geom_smooth(se = FALSE, span = 0.4, size = 2, alpha = 0.9) +
+  geom_smooth(se = FALSE, span = 0.5, size = 2, alpha = 0.9) +
   facet_wrap(~central_bank_filtered, scales = "free") +
   scale_color_scico_d(palette = "roma",
                       name = NULL) +
@@ -307,21 +322,17 @@ plot_topic_year_cb <- ggplot(topic_year_cb, aes(date, mean_semester_cb, color = 
        y = NULL) +
   guides(color = guide_legend (nrow=2))
 
-ragg::agg_png(here("pictures", "topic_prevalence_per_cb.png"), 
-              width = 35, 
-              height = 30, 
-              units = "cm", 
-              res = 300)
-plot_topic_year_cb
-invisible(dev.off())
+ggsave(here("pictures", "topic_prevalence_per_cb.png"), 
+       plot_topic_year_cb, 
+       device = ragg::agg_png, width = 35, height = 30, units = "cm") 
 
 cb_year_topic <- topic_diff_filtered %>% 
   filter(! central_bank_filtered %in% c("other central banks"),
          ! str_detect(central_bank_filtered, "ireland")) %>% 
-  select(topic_name, topic, date, central_bank_filtered, mean_semester_cb) %>% 
+  select(topic_name, topic, date_quarter, central_bank_filtered, mean_quarter_cb) %>% 
   unique
 
-plot_cb_year_topic <- ggplot(cb_year_topic, aes(date, mean_semester_cb, color = central_bank_filtered)) + 
+plot_cb_year_topic <- ggplot(cb_year_topic, aes(date_quarter, mean_quarter_cb, color = central_bank_filtered)) + 
   geom_point(alpha = 0.6) +
   geom_smooth(se = FALSE, span = 0.5, size = 2, alpha = 0.9) +
   scale_color_scico_d(palette = "hawaii",
@@ -333,11 +344,164 @@ plot_cb_year_topic <- ggplot(cb_year_topic, aes(date, mean_semester_cb, color = 
        x = NULL,
        y = NULL)
 
-ragg::agg_png(here("pictures", "CB_per_topics.png"), 
-              width = 35, 
-              height = 30, 
-              units = "cm", 
-              res = 300)
-plot_cb_year_topic
-invisible(dev.off())
-  
+ggsave(here("pictures", "CB_per_topics.png"), 
+       plot_cb_year_topic, 
+       device = ragg::agg_png, width = 35, height = 30, units = "cm") 
+
+
+# Do it with metadata covariates
+#  ###### Using covariates for year distribution and topic content per affiliation ##############
+#' 
+# #### Looking at year distribution ####
+#' 
+#' We fit regressions for our year covariate.
+
+prep_year <- estimateEffect(~s(date)*central_bank,
+                       topic_model,
+                       metadata = stm_data$meta)
+
+tidyprep_year <- tidystm::extract.estimateEffect(prep_year, 
+                                        "date", 
+                                        topic_model, 
+                                        method = "continuous") %>% 
+  left_join(select(topics_complete, id, topic_name, color, new_id), by = c("topic" = "id"))
+
+saveRDS(tidyprep_year, here(data_path, "topic_modelling", "estimate_effect_year.rds"))
+
+#prep_date <- estimateEffect(~s(year) + central_bank,
+ #                           topic_model,
+  #                          metadata = stm_data$meta,
+   #                         nsims = 200)
+
+#tidyprep_year <- tidystm::extract.estimateEffect(prep, 
+ #                                                "year", 
+  #                                               topic_model, 
+   #                                              method = "continuous") %>% 
+  #left_join(select(topics_complete, id, topic_name, color, new_id), by = c("topic" = "id"))
+
+#saveRDS(tidyprep_year, here(data_path, "topic_modelling", "estimate_effect_year.rds"))
+
+
+#' We plot the impact for each topics:
+topic_per_year <- ggplot(tidyprep_year, aes(x = covariate.value, y = estimate,
+                                            ymin = ci.lower, ymax = ci.upper,
+                                            group = factor(topic),
+                                            fill = color)) +
+  scale_fill_identity() +
+  facet_wrap(~ fct_reorder(str_wrap(topic_name, 35), topic), nrow = 7) +
+  geom_ribbon(alpha = .5, show.legend = FALSE) +
+  geom_line() +
+  theme(strip.text = element_text(size = 7)) +
+  theme(legend.position = "bottom") +
+  labs(title = "Topic prevalence",
+       x = NULL,
+       y = NULL)
+
+ggsave(here("pictures", "topic_per_year.png"), 
+       topic_per_year, 
+       device = ragg::agg_png, width = 60, height = 50, units = "cm") 
+
+# We just focus on the topics we are interested in (facet wrap method)
+topic_per_year_filtered <- tidyprep_year %>% 
+  filter(topic %in% topic_of_interest) %>% 
+  ggplot(aes(x = covariate.value, y = estimate,
+             ymin = ci.lower, ymax = ci.upper,
+             fill = fct_reorder(str_wrap(topic_name, 30), topic))) +
+  scale_fill_scico_d(palette = "roma") +
+  scale_color_scico_d(palette = "roma", name = NULL) +
+  facet_wrap(~ fct_reorder(str_wrap(topic_name, 30), topic), nrow = 2) +
+  geom_ribbon(alpha = .5, show.legend = FALSE) +
+  geom_line(aes(color = fct_reorder(str_wrap(topic_name, 30), topic))) +
+  theme(strip.text = element_text(size = 10)) +
+  theme(legend.position = "bottom") +
+  labs(title = "Topic prevalence",
+       x = NULL,
+       y = NULL)
+
+ggsave(here("pictures", "topic_per_year_filtered.png"), 
+       topic_per_year_filtered, 
+       device = ragg::agg_png, width = 40, height = 30, units = "cm")
+
+# Same topics but now on the same graph
+topic_per_year_comparison <- tidyprep_year %>% 
+  filter(topic %in% topic_of_interest) %>% 
+  ggplot(aes(x = covariate.value, y = estimate,
+             ymin = ci.lower, ymax = ci.upper,
+             fill = fct_reorder(str_wrap(topic_name, 30), topic))) +
+  scale_fill_scico_d(palette = "roma") +
+  scale_color_scico_d(palette = "roma", name = NULL) +
+  geom_ribbon(alpha = .1, show.legend = FALSE) +
+  geom_line(aes(color = fct_reorder(str_wrap(topic_name, 30), topic)), size = 2) +
+  theme(legend.position = "bottom") +
+  labs(title = "Topic prevalence",
+       x = NULL,
+       y = NULL)
+
+ggsave(here("pictures", "topic_per_year_comparison.png"), 
+       topic_per_year_comparison, 
+       device = ragg::agg_png, width = 40, height = 30, units = "cm")
+
+########## Looking at year and central banks ##############
+
+list_cb <- filter(nb_speech, n >= 70)$central_bank
+list_estimate <- list()
+for(i in list_cb){
+estimate <- extract.estimateEffect(x = prep_year,
+                                   covariate = "year",
+                                   method = "continuous",
+                                   model = topic_model,
+                                   labeltype = "frex",
+                                   n = 4,
+                                   moderator = "central_bank",
+                                   moderator.value = i)
+list_estimate[[i]] <- estimate
+}
+
+tidyprep_all <- list_estimate %>% 
+  rbindlist() %>% 
+  left_join(select(topics_complete, id, topic_name, color, new_id), by = c("topic" = "id"))
+
+saveRDS(tidyprep_all, here(data_path, "topic_modelling", "estimate_effect_all.rds"))
+
+# Plotting for topic of interest
+topic_year_per_cb <- tidyprep_all %>% 
+  filter(topic %in% topic_of_interest) %>% 
+  filter(! str_detect(moderator.value, "portugal|netherlands")) %>% 
+  ggplot(aes(x = covariate.value, y = estimate,
+#             ymin = ci.lower, ymax = ci.upper,
+             fill = fct_reorder(str_wrap(topic_name, 30), topic))) +
+  scale_fill_scico_d(palette = "roma") +
+  facet_wrap(~ moderator.value, nrow = 3, scale = "free") +
+#  geom_ribbon(alpha = .1, show.legend = FALSE) +
+  geom_line(aes(color = fct_reorder(str_wrap(topic_name, 30), topic)), size = 2, alpha = .8) +
+  scale_color_scico_d(palette = "roma", name = NULL) +
+  theme(strip.text = element_text(size = 10)) +
+  theme(legend.position = "bottom") +
+  labs(title = "Topic prevalence",
+       x = NULL,
+       y = NULL)
+
+ggsave(here("pictures", "topic_year_per_cb.png"), 
+       topic_year_per_cb, 
+       device = ragg::agg_png, width = 40, height = 30, units = "cm")
+
+#' ### Topic content depending of affiliation
+#' 
+
+# plot
+plot(topic_model, 
+     type = "perspectives", 
+     topics = 57,
+     covarlevels = c("bundesbank", "bank of greece"),
+     n = 60,
+     text.cex = 2.5)
+
+
+plot(topic_model, 
+     type = "perspectives", 
+     topics = c(5, 57),
+ #    covarlevels = c("USA Only", "Europe Only"),
+     n = 60,
+     text.cex = 4)
+
+

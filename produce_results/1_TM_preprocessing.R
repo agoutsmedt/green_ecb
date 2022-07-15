@@ -1,8 +1,7 @@
 source("packages_and_data.R")
 source("function/functions_for_topic_modelling.R")
 eurosystem_metadata <- readRDS(here(data_path, "eurosystem_metadata.rds"))
-eurosystem_text <- readRDS(here(data_path, "eurosystem_text.rds")) %>% 
-  mutate(document_name = paste0(file, "_page", page))
+eurosystem_text <- readRDS(here(data_path, "eurosystem_text.rds"))
 
 ####################### preparing text for topic modelling ####################
 
@@ -60,8 +59,7 @@ term_list <- eurosystem_text %>%
   anti_join(stop_words_increased, by = c("word_2" = "word")) %>% 
   anti_join(stop_words_increased, by = c("word_3" = "word")) %>% 
   unite(term, word_1, word_2, word_3, sep = " ") %>% 
-  .[, term := str_trim(term, "both")] %>% 
-  .[, document_name := paste0(file, "_page", page)] %>% 
+  .[, term := str_trim(term, "both")] %>%  
   select(-word, -unigram, -bigram)
 
 to_remove <- c("www\\.",
@@ -72,12 +70,15 @@ to_remove <- c("www\\.",
                "strasse")
 
 term_list_filtered <- term_list %>% 
-  filter(! str_detect(term, paste0(to_remove, collapse = "|")))
+  filter(! str_detect(term, paste0(to_remove, collapse = "|"))) %>% 
+  mutate(document_name = paste0(file, "_page", page)) %>% 
+  arrange(document_name)
          
 saveRDS(term_list_filtered, here(data_path,
                         "topic_modelling", 
                         "TM_term_list.rds")) 
 
+#' `term_list_filtered <- readRDS(here(data_path, "topic_modelling","TM_term_list.rds"))`
 #' We will now produce different set of data depending on different filtering parameters:
 #' 
 hyper_grid <- expand.grid(
@@ -100,22 +101,24 @@ data_set <- create_stm(data_set)
 #' 
 
 metadata_to_join <- eurosystem_metadata %>% 
-  select(file = file_name, central_bank, year) %>% 
+  select(file = file_name, central_bank, year, date) %>%
+  mutate(date = dmy(date)) %>% 
   left_join(select(eurosystem_text, document_name, file))
   
 metadata_to_join <- metadata_to_join %>% 
   ungroup() %>% 
   left_join(metadata_to_join) %>% 
-  select(document_name, central_bank, year) %>% 
+  select(document_name, central_bank, year, date) %>% 
   unique
 
 for(i in 1:nrow(data_set)){
-  metadata <- data.table("document_name" = names(data_set$stm[[i]]$documents))
+  metadata <- data.table("document_name" = rownames(data_set$dfm[[i]]))
   
   metadata <- metadata %>% 
-    left_join(metadata_to_join) 
+    left_join(metadata_to_join)
     
   data_set$stm[[i]]$meta$year <- as.integer(metadata$year)
+  data_set$stm[[i]]$meta$date <- as.integer(metadata$date)
   data_set$stm[[i]]$meta$central_bank <- metadata$central_bank
 }
 
@@ -128,16 +131,36 @@ saveRDS(data_set, here(data_path,
 #' topic models for different number of topics.
 #' 
 
-topic_model <- searchK(data_set$stm[[i]]$documents,
-                       data_set$stm[[i]]$vocab,
-                       prevalence = ~s(year)+central_bank,
-                       content = ~central_bank,
-                       data = data_set$stm[[i]]$meta,
-                       K = 0,
-                       emtol = 1e-04,
-                       ngroups = 4)
+i = 1
+searchK_topic <- searchK(data_set$stm[[i]]$documents,
+                         data_set$stm[[i]]$vocab,
+                         prevalence = ~s(year)+central_bank,
+                         content = ~central_bank,
+                         data = data_set$stm[[i]]$meta,
+                         K = 0,
+                         emtol = 1e-04,
+                         ngroups = 4)
 
-plot(topic_model)
+saveRDS(topic_model, here(data_path, 
+                           "topic_modelling",
+                           "TM_searchK.rds"))
+
+nb_topics <- seq(30, 120, 10)
+for(K in nb_topics){
+topic_model <- stm(data_set$stm[[i]]$document,
+                   data_set$stm[[i]]$vocab,
+                   prevalence = ~s(year)+central_bank,
+                   content = ~central_bank,
+                   data = data_set$stm[[i]]$meta,
+                   init.type = "Spectral",
+                   K = K,
+                   emtol = 1e-04,
+                   ngroups = 4)
+
+saveRDS(topic_model, here(data_path, 
+                          "topic_modelling",
+                          paste0("TM_", K, ".rds")))
+}
 
 # setting up parallel process
 #plan(multisession, workers = 2)

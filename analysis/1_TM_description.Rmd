@@ -1,0 +1,407 @@
+---
+title: "Analysing Topic Modelling"
+author: "Aurélien Goutsmedt"
+date: "23/06/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{js zoom-jquery, include = FALSE, echo = FALSE}
+ $(document).ready(function() {
+    $('body').prepend('<div class=\"zoomDiv\"><img src=\"\" class=\"zoomImg\"></div>');
+    // onClick function for all plots (img's)
+    $('img:not(.zoomImg)').click(function() {
+      $('.zoomImg').attr('src', $(this).attr('src')).css({width: '100%'});
+      $('.zoomDiv').css({opacity: '1', width: 'auto', border: '1px solid white', borderRadius: '5px', position: 'fixed', top: '50%', left: '50%', marginRight: '-50%', transform: 'translate(-50%, -50%)', boxShadow: '0px 0px 50px #888888', zIndex: '50', overflow: 'auto', maxHeight: '100%'});
+    });
+    // onClick function for zoomImg
+    $('img.zoomImg').click(function() {
+      $('.zoomDiv').css({opacity: '0', width: '0%'}); 
+    });
+  });
+```
+
+```{r loading}
+# load packages, paths, and the macro plateform data
+source(here::here("packages_and_data.R"))
+
+# choose topics
+topic_of_interest <- c(5,
+                       16, 
+                  #     32,
+                       40, 
+                       57,
+                   #    59,
+                       70,
+                       91)
+
+# load the topics stats and gamma attributes
+topic_diff <- readRDS(here(data_path, 
+                           "topic_modelling",
+                           "TM_topics_diff.rds"))
+
+topics <- readRDS(here(data_path, 
+                           "topic_modelling",
+                           "TM_gamma_values.rds")) %>% 
+  mutate(speech = str_extract(document, ".*(?=_)")) %>% 
+  group_by(topic_name, central_bank) %>% 
+  mutate(gamma_bc = mean(gamma)) %>% 
+  ungroup() %>% 
+  group_by(topic_name, speaker_cleaned) %>% 
+  mutate(gamma_speaker = mean(gamma)) %>% 
+  ungroup() %>% 
+  group_by(topic_name, speech) %>% 
+  mutate(gamma_speech = mean(gamma)) %>% 
+  ungroup()
+
+# we keep only data for CB that publish sufficiently
+
+cb_filtered <- topics %>% 
+  select(central_bank, speech) %>% 
+  unique() %>% 
+  count(central_bank) %>% 
+  filter(n > 70)
+
+topic_focus <- paste0("Topic ", topic_of_interest) 
+
+nb_speech <- topics %>% 
+  select(speaker_cleaned, speech) %>% 
+  unique() %>% 
+  count(speaker_cleaned) %>% 
+  rename(speaker_nb_speech = n)
+
+topics_filtered <- topics %>% 
+  filter(central_bank %in% cb_filtered$central_bank,
+         topic %in% topic_focus) %>% 
+  left_join(nb_speech)
+
+#prevalence_rank <- topics %>% 
+ # select(topic_name, topic_prevalence) %>% 
+  #unique() %>% 
+  #arrange(desc(topic_prevalence)) %>% 
+  #mutate(rank_prevalence = 1:n()) 
+
+# load the highest frex value terms for each topics
+top_terms <- readRDS(here(data_path, 
+                          "topic_modelling",
+                          "TM_top_terms.rds")) %>%
+  rename("topic_n" = topic) %>%
+  filter(measure %in% c("beta", "frex", "lift"))
+
+# Loading some examples of the topics
+topic_examples <- readRDS(here(data_path,
+                               "topic_modelling",
+                               "TM_Topic_examples.rds")) %>% 
+  mutate(examples = str_trunc(examples, 1000, "right") %>% str_squish())
+  
+```
+
+# Description of Topics
+
+```{r results = "asis"}
+topic_list <- topics %>% 
+  filter(topic %in% topic_focus) %>% 
+  .$topic %>% 
+  unique
+  
+for (topic_turn in topic_list) {
+  topic_in_question <- topics_filtered %>% 
+    filter(topic == topic_turn)
+  
+  # Calculate top frex and lift value for the topic 
+  topic_terms <- top_terms %>%
+    filter(topic_n == as.integer(str_extract(topic_turn, "[:digit:]+")),
+           measure == "frex") %>%
+    left_join((top_terms %>%
+                 filter(topic_n == as.integer(str_extract(topic_turn, "[:digit:]+")),
+                        measure == "beta") %>% 
+                 ungroup() %>%  
+                 select(-topic_n)), 
+              by = c("rank" = "rank"),
+              suffix = c("_frex", "_beta")) %>% 
+    select(! starts_with("measure")) %>% 
+    relocate(rank, .after = topic_n)
+  
+  # Most representative speech
+ top_speech_page <- topic_in_question %>% 
+   select(document, title, speaker_cleaned, central_bank, pdf_link, gamma) %>% 
+   slice_max(gamma, n = 20)
+ 
+  top_speech <- topic_in_question %>% 
+    select(title, speaker_cleaned, central_bank, pdf_link, gamma_speech) %>% 
+    unique() %>%     
+    slice_max(gamma_speech, n = 20)
+   
+  # Most representative cb
+  
+  # Most representative speaker
+  
+# Most cited document of the topic
+  cited <- cited_corpus %>% 
+    filter(topic_name == topic_turn,
+           ! is.na(nb_cit)) %>% 
+    select(Nom, Annee_Bibliographique, Titre, Revue, journal_type, EU_US_collab, nb_cit, gamma)
+  
+  top_cited <- cited %>%
+    filter(nb_cit > 1) %>% 
+    slice_max(order_by = nb_cit, n = 15, with_ties = FALSE)
+  
+  top_cited_journal <- cited %>%
+    filter(nb_cit > 1) %>% 
+    group_by(journal_type) %>%
+    slice_max(order_by = nb_cit, n = 10, with_ties = FALSE)
+  
+  top_cited_affiliation <- cited %>%
+    filter(EU_US_collab %in% c("USA Only", "Europe Only"),
+           nb_cit > 1) %>% 
+    group_by(EU_US_collab) %>%
+    slice_max(order_by = nb_cit, n = 10, with_ties = FALSE)
+  
+# Most representative speech of the topic
+  top_gamma <- cited %>%
+    slice_max(order_by = gamma, n = 15, with_ties = FALSE)
+  
+  top_gamma_journal <- cited %>%
+    group_by(journal_type) %>%
+    slice_max(order_by = gamma, n = 10, with_ties = FALSE)
+  
+  top_gamma_affiliation <- cited %>%
+    filter(EU_US_collab %in% c("USA Only", "Europe Only")) %>% 
+    group_by(EU_US_collab) %>%
+    slice_max(order_by = gamma, n = 10, with_ties = FALSE)
+  
+# Looking at links between topics and communities
+  top_communities <- topics %>%
+    filter(topic_name == topic_turn) %>%
+    select(topic_name, ID_Art) %>%
+    left_join(mutate(networks_top5, Label_com = ifelse(is.na(Label_com), "Small Communities", Label_com))) %>%
+    add_count(Label_com) %>%
+    mutate(percent_community = round((n / n()) * 100, 2)) %>%
+    select(Label_com, percent_community) %>%
+    unique() %>%
+    arrange(desc(percent_community)) %>% 
+    filter(percent_community > 5)
+  # Looking at institutions
+  top_institution <- institutions %>% 
+    filter(topic_name == topic_turn) %>% 
+    count(Institution) %>% 
+    filter(n > 1) %>% 
+    slice_max(n = 15, order_by = n, with_ties = FALSE)
+  
+  top_country <- institutions %>% 
+    filter(topic_name == topic_turn) %>% 
+    count(Pays) %>% 
+    filter(n > 1) %>% 
+    slice_max(n = 10, order_by = n, with_ties = FALSE)
+  
+  ################ Beginning of the template ######################
+  cat("## ", topic_turn, "\n")
+  cat(paste0("The topic displays a difference of means of Europe-based minus US-based authors of ",
+             unique(topic_in_question$diff_affiliation),
+             " and of EER minus top 5 of ",
+             unique(topic_in_question$diff_journal),
+             " for a total of ",
+             unique(topic_in_question$total_diff),
+             ". It displays a difference of logratio of  Europe-based minus US-based authors of ",
+             unique(topic_in_question$logratio_affiliation ),
+             " and of EER minus top 5 of ",
+             unique(topic_in_question$logratio_journal),
+             " for a total of ",
+             unique(topic_in_question$sum_logratio),
+             "\n\n"))
+  cat(paste0("It belongs to the \"",
+             unique(topic_in_question$Com_name),
+             "\" correlation network community.",
+             "\n\n"))
+  
+  cat(paste0("The topic prevalence is ranked ",
+             filter(prevalence_rank, topic_name == topic_turn)$rank_prevalence,
+             " on ",
+             nrow(prevalence_rank),
+             " topics.\n\n"))
+  
+    cat(paste0("We have ",
+             nrow(topic_in_question),
+             " articles with a gamma value above 0.01 for this topic.\n\n"))
+  
+  cat("###", "Describing Topics \n\n")
+  cat("The most common terms according to different indicators:")
+  cat("\n\n")
+  print(kable(topic_terms) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  
+  cat("The most representative abstracts:")
+  cat("\n\n")
+  print(kable(filter(topic_examples, id == str_extract(topic_turn, "\\d+") %>% as.integer) %>% select(examples)) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F), font_size = 12))
+  cat("\n\n")
+  
+  cat("###", "Top References \n\n")
+  cat("####", "The most common references {.tabset}")
+  cat("\n\n")
+  cat("#####", "Absolute top references")
+  cat("\n\n")
+  print(kable(top_refs) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  cat("#####", "Top references by TF-IDF")
+  cat("\n\n")
+  print(kable(filter(refs_tf_idf, topic_name == topic_turn) %>% select(-topic_name)) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  
+    cat("#####", "Early references (first quartile)")
+  cat("\n\n")
+  print(kable(top_early_refs) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  
+    cat("#####", "Late references (last quartile)")
+  cat("\n\n")
+  print(kable(top_late_refs) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  
+  cat("####", "The most common refs depending on publication and affiliations {.tabset}")
+  cat("\n\n")
+  cat("#####", "EER")
+  cat("\n\n")
+  print(kable(filter(top_refs_journal, journal_type == "EER")) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  
+  cat("#####", "TOP5")
+  cat("\n\n")
+  print(kable(filter(top_refs_journal, journal_type == "TOP5")) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  cat("\n\n")
+  cat("#####", "Europe Only")
+  cat("\n\n")
+  print(kable(filter(top_refs_affiliation, EU_US_collab == "Europe Only")) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  
+  cat("#####", "USA Only")
+  cat("\n\n")
+  print(kable(filter(top_refs_affiliation, EU_US_collab == "USA Only")) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  
+  cat("####", "Log odds ratio of references {.tabset}")
+  cat("\n\nFrom the most associated with EER or Europe Only refs, to the mort Top5 or USA Only refs\n\n")
+  cat("#####", "Log ratio on Journals")
+  cat("\n\n")
+  print(kable(top_logratio_ref_journal) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  
+  cat("#####", "Log ratio on Affiliations")
+  cat("\n\n")
+  print(kable(top_logratio_ref_affiliation) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  
+  cat("###", "Popular Articles \n\n")
+  cat("The most popular articles in the topic:")
+  cat("\n\n")
+  print(kable(top_cited) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  
+  cat("####", "The most popular articles in the topic depending on publication and affiliations {.tabset}")
+  cat("\n\n")
+  cat("#####", "EER")
+  cat("\n\n")
+  print(kable(filter(top_cited_journal, journal_type == "EER")) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  
+  cat("#####", "TOP5")
+  cat("\n\n")
+  print(kable(filter(top_cited_journal, journal_type == "TOP5")) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  
+  cat("#####", "Europe Only")
+  cat("\n\n")
+  print(kable(filter(top_cited_affiliation, EU_US_collab == "Europe Only")) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  
+  cat("#####", "USA Only")
+  cat("\n\n")
+  print(kable(filter(top_cited_affiliation, EU_US_collab == "USA Only")) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  
+  cat("###", "Most representative articles of the topic \n\n")
+  cat("The most popular articles in the topic:")
+  cat("\n\n")
+  print(kable(top_gamma) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  
+  cat("####", "The most representative articles in the topic depending on publication and affiliations {.tabset}")
+  cat("\n\n")
+  cat("#####", "EER")
+  cat("\n\n")
+  print(kable(filter(top_gamma_journal, journal_type == "EER")) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  
+  cat("#####", "TOP5")
+  cat("\n\n")
+  print(kable(filter(top_gamma_journal, journal_type == "TOP5")) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  
+  cat("#####", "Europe Only")
+  cat("\n\n")
+  print(kable(filter(top_gamma_affiliation, EU_US_collab == "Europe Only")) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  
+  cat("#####", "USA Only")
+  cat("\n\n")
+  print(kable(filter(top_gamma_affiliation, EU_US_collab == "USA Only")) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  
+  cat("###", "Recurrent community \n\n")
+  cat("The most recurrent bibliometric community in the topic:")
+  cat("\n\n")
+  print(kable(top_communities) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  
+  cat("###", "Recurrent institutions and countries {.tabset}")
+  cat("\n\n")
+  cat("####", "Absolute Values for institutions")
+  cat("\n\n")
+  print(kable(top_institution) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  
+  cat("####", "TF-IDF for Institutions")
+  cat("\n\n")
+  print(kable(filter(institutions_tf_idf, topic_name == topic_turn) %>% select(-topic_name)) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  
+  cat("####", "Absolute values for Countries")
+  cat("\n\n")
+  print(kable(top_country) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  cat("####", "TF-IDF for Countries")
+  cat("\n\n")
+  print(kable(filter(countries_tf_idf, topic_name == topic_turn) %>% select(-topic_name)) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+}
+```

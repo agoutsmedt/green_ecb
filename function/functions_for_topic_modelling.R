@@ -100,6 +100,7 @@ create_topicmodels_dataset <- function(tuning_parameters,
   data_set <- data_list %>% 
     bind_rows() %>%
     mutate(document = as.character(document)) %>% 
+    arrange(document) %>% 
     nest(data = 1:(which(colnames(data_filtered) == "upper_share") - 1))
 }
 
@@ -107,8 +108,8 @@ create_topicmodels_dataset <- function(tuning_parameters,
 #' 
 #' ## Creating stm object from a set of data with different preprocessing criteria
 #' 
-create_stm <- function(data, min_word_number = 200){ 
-  data_set <- data %>% 
+create_stm <- function(data_set, min_word_number = 200){ 
+  data_set <- data_set %>% 
     mutate(dfm = map(data, 
                      ~tidytext::cast_dfm(data = ., document, term, count_per_doc))) %>% 
     mutate(stm = map(dfm, 
@@ -342,7 +343,12 @@ average_frex <- function(model, nb_terms = nb_terms, w = w) {
 #' 
 calculate_beta <- function(model, nb_terms = 10) {
   beta_value <- tidytext::tidy(model, matrix = "beta") %>% 
-    filter(! is.na(topic) & ! is.na(term)) %>% 
+    select(topic, term, beta) %>% 
+    group_by(topic, term) %>% # we need that in case we have content variable put in the model
+    mutate(beta = mean(beta)) %>% 
+    unique() %>% 
+    ungroup() %>% 
+    filter(! is.na(topic) & ! is.na(term)) %>%
     group_by(topic) %>% 
     arrange(-beta) %>% 
     slice(1:nb_terms) %>% 
@@ -552,4 +558,24 @@ plot_frequency <- function(topics_data, model, palette = color){
          x = "Frequency",
          y = "") +
     theme_bw()
+}
+
+#' Extract effect of covariates on topics for multiple qualitative covariate
+#' 
+several_extract.estimateEffect<- function(i,
+                                          x = prep,
+                                          covariate, 
+                                          method = "continuous", 
+                                          model = topic_model,
+                                          labeltype = "frex",
+                                          n = 4,
+                                          moderator) {
+  extract.estimateEffect(x = prep,
+                         covariate = covariate,
+                         method = method,
+                         model = topic_model,
+                         labeltype = "frex",
+                         n = 4,
+                         moderator = moderator,
+                         moderator.value = i)
 }

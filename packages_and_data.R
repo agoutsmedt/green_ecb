@@ -14,6 +14,7 @@ package_list <- c("tidyverse",
                   "data.table",
                   "furrr",
                   "stm",
+                  "tidystm",
                   "huge",
                   "igraph",
                   "tidygraph",
@@ -30,7 +31,7 @@ for(package in package_list){
 }
 
 
-github_list <- c("agoutsmedt/networkflow")
+github_list <- c("agoutsmedt/networkflow", "mikajoh/tidystm")
 for (p in github_list) {
   if (gsub(".*/", "", p) %in% installed.packages() == FALSE) {
     devtools::install_github(p)
@@ -38,6 +39,10 @@ for (p in github_list) {
   library(gsub(".*/", "", p), character.only = TRUE)
 }
 
-data_path <- here(path.expand("~"),
-                  "data",
-                  "green_ecb_responsiveness")
+if(str_detect(here::here(), "\\/home\\/aurelien")){
+  data_path <- "/projects/data/aurelien/green_ecb_responsiveness"
+} else {
+  data_path <- here(path.expand("~"),
+                    "data",
+                    "green_ecb_responsiveness")
+}
