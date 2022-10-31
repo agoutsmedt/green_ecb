@@ -127,7 +127,7 @@ create_stm <- function(data_set, min_word_number = 200){
     
   }
   
-  data_set <- data.table::data.table(data_set, list_document, list_vocab) %>% 
+  data_set <- data.table::data.table(data_set, list_document, list_vocab)$list_document[[1]] %>% 
     rename(document = list_document,
            vocab = list_vocab)
   

@@ -36,9 +36,17 @@ term_list <- bis_text %>%
   .[, document := paste0(file, "_page", page)] %>% 
   select(document, term)
 
+term_list_unigram <- term_list %>% 
+  filter(str_detect(term, " ")) %>% unique() %>%  View()
+
 saveRDS(term_list, here(data_path,
                         "word_embedding", 
                         "term_list_we.rds"))
+
+#' `term_list <- readRDS(here(data_path, "word_embedding", "term_list_we.rds"))`
+
+term_list_filtered <- term_list[, N := .N, by = "term"][N >= 10] %>% 
+  .[, bigram := str_detect(term, " ")]
 
 ####################### trying word embedding with the Supervised Machine Learning Textbook ####################
 
@@ -124,7 +132,7 @@ model <- word2vec::word2vec(corpus$text, type = "cbow", window = 6, dim = 100, i
 word2vec::write.word2vec(model, here(data_path,
                            "word_embedding", 
                            "word_vectors_word2vec.bin"))
-predict(model, "research", type = "nearest", top_n = 20)
+predict(wv_word2vec, "expert", type = "nearest", top_n = 20)
 
 #embedding <- as.matrix(model)
 #library(uwot)

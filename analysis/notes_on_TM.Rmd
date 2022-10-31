@@ -1,0 +1,48 @@
+---
+title: "Notes on methods and topic modelling"
+author: "Aurélien Goutsmedt and Clément Fontan"
+date: "`r Sys.Date()`" 
+output: 
+  html_document:
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+# Selection of corpus
+
+We can imagine two types of methods to identify speeches about inflation in Eurosystem
+CBs' speeches. Two methods are possible:
+
+- a simple, fast and arbitrary one: keeping speeches with a certain frequency of
+"inflation" and "price stability". 
+
+- a more complex method: running topic modelling, then keeping only the speech with
+ a certain (arbitrary) value of gamma parameters for the topic of interests.
+
+Here is the number of speeches in the corpus depending on the threshold we use: 
+- a small threshold: more than 5 occurrences of "inflation" and "price stability" within the whole speech;
+- a medium threshold: more than 10 occurences;
+- a large threshold: more than 20 occurences.
+
+```{r}
+knitr::include_graphics(here::here("pictures", glue::glue("threshold_corpus_absolute.png")))
+```
+
+Here is the share on the whole corpus of the speeches validating the different thresholds:
+
+
+```{r}
+knitr::include_graphics(here::here("pictures", glue::glue("threshold_corpus_share.png")))
+```
+
+# Preparation of the topic model
+
+We work with the large threshold. We tokenize the texts and look at words, bigrams and trigrams.^[Possibility to rather use a statistical method for selecting bigrams and trigrams.] The corpus is organised in paragraphs: the document in the topic modelling is the paragraph. This allows for higher accuracy to understand what the whole speech is about.
+
+As a first try, we adopt the following specifications for the topic model:
+
+- we remove all the words/bigrams/trigrams that appeared in less than 0.5% of the paragraphs;
+- we run the model for 60 topics.
