@@ -1,6 +1,6 @@
 source("packages_and_data.R")
 source("function/functions_for_topic_modelling.R")
-eurosystem_metadata <- readRDS(here(data_path, "eurosystem_metadata.rds")) %>% 
+eurosystem_metadata <- readRDS(here(data_path, "eurosystem_metadata_inflation.rds")) %>% 
   arrange(file_name)
 text_inflation <- readRDS(here(data_path, "eurosystem_text_inflation.rds")) %>% 
   arrange(document_id)

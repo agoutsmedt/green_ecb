@@ -305,8 +305,15 @@ plot_topicmodels_stat <- function(data, size = 1, weight_1 = 0.5, weight_2 = 0.3
 #' 
 #' Inspired by the STM package but a bit revisited to fit with our goals
 
-calculate_frex <- function(model, nb_terms = nb_terms, w = w) {
-  logbeta <- model$beta$logbeta[[1]]
+calculate_frex <- function(model, nb_terms = nb_terms, w = w, topic_method = c("STM", "LDA")) {
+  if(topic_method == "LDA"){
+    logbeta <- tidy(model, matrix = "beta", log = TRUE) %>%
+      tidytext::cast_dfm(topic, term, beta) %>% 
+      as.matrix()
+  } else {
+    logbeta <- model$beta$logbeta[[1]]   
+  }
+
   
   col.lse <- function(mat) {
     matrixStats::colLogSumExps(mat)
@@ -316,9 +323,16 @@ calculate_frex <- function(model, nb_terms = nb_terms, w = w) {
   freqscore <- apply(logbeta,1,data.table::frank)/ncol(logbeta)
   exclscore <- apply(excl,1,data.table::frank)/ncol(logbeta)
   frex <- 1/(w/freqscore + (1-w)/exclscore)
-  frex <- data.table("term" = model$vocab,
+  
+  if(topic_method == "LDA"){
+    terms <- tidy(model, matrix = "beta", log = TRUE)$term %>% unique()
+  } else {
+    terms <- model$vocab  
+  }
+  
+  frex <- data.table("term" = terms,
                      as.data.table(frex)) %>% 
-    pivot_longer(cols = starts_with("V"), 
+    pivot_longer(cols = where(is.numeric), 
                  names_to = "topic", 
                  values_to = "frex") %>%
     mutate(topic = as.integer(str_remove(topic, "V"))) %>% 
