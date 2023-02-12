@@ -24,7 +24,7 @@ optimised_lda <- ldatuning::FindTopicsNumber(
   metrics = c("Griffiths2004", "CaoJuan2009", "Arun2010", "Deveaud2014"),
   method = "Gibbs",
   control = list(seed = 77),
-  mc.cores = 3,
+  mc.cores = 2,
   verbose = TRUE
 )
 saveRDS(optimised_lda, here(data_path, 
@@ -34,7 +34,7 @@ saveRDS(optimised_lda, here(data_path,
 ldatuning::FindTopicsNumber_plot(optimised_lda)
 
 #' We select the number of topics depending on the analysis above.
-K = 30
+K = 70
 lda <- topicmodels::LDA(dtm_filtered, k = K, method = "Gibbs", control = list(seed = 1989))
 
 saveRDS(lda, here(data_path, 
@@ -44,7 +44,7 @@ saveRDS(lda, here(data_path,
 #' ## Analysing results
 #' 
 #' We can now analyse the results of the model saved
-#' `lda <- readRDS(here(data_path, "topic_modelling", paste0("LDA_50.rds")))`
+#' `lda <- readRDS(here(data_path, "topic_modelling", paste0("LDA_70.rds")))`
 #' 
 #' We can plot the top frex and beta words for each topic
 
@@ -57,13 +57,13 @@ top_beta_graph <- beta_lda %>%
          term = tidytext::reorder_within(term, beta, topic)) %>%
   ggplot(aes(beta, term, fill = fct_reorder(topic_name, topic))) +
   geom_col(show.legend = FALSE) +
-  facet_wrap(~ fct_reorder(topic_name, topic), scales = "free", ncol = 9) +
+  facet_wrap(~ fct_reorder(topic_name, topic), scales = "free", ncol = 10) +
   scale_y_reordered()
 
 
 ggsave(here("pictures", glue::glue("TM_top_beta_{K}_topics_LDA.png")), top_beta_graph,
        device = ragg::agg_png,
-       width = 50, height = 40, units = "cm", res = 300)
+       width = 60, height = 50, units = "cm", res = 300)
 
 frex_lda <- calculate_frex(lda, 15, 0.5, topic_method = "LDA")
 top_frex_graph <- frex_lda %>%
@@ -74,13 +74,13 @@ top_frex_graph <- frex_lda %>%
          term = tidytext::reorder_within(term, frex, topic)) %>%
   ggplot(aes(frex, term, fill = fct_reorder(topic_name, topic))) +
   geom_col(show.legend = FALSE) +
-  facet_wrap(~ fct_reorder(topic_name, topic), scales = "free", ncol = 9) +
+  facet_wrap(~ fct_reorder(topic_name, topic), scales = "free", ncol = 10) +
   scale_y_reordered() +
   coord_cartesian(xlim=c(0.99,1))
 
 ggsave(here("pictures", glue::glue("TM_top_frex_{K}_topics_LDA.png")), top_frex_graph,
        device = ragg::agg_png,
-       width = 50, height = 40, units = "cm", res = 300)
+       width = 60, height = 50, units = "cm", res = 300)
 
 
 #' We give names to the topics, from the beta values (frex are sometimes too specific)
@@ -97,7 +97,7 @@ lda_data <- tidy(lda, matrix = "gamma") %>%
   left_join(topic_name) %>% 
   rename(document_id = document) %>% 
   left_join(eurosystem_text) %>% 
-  left_join(select(eurosystem_metadata, year, date, title, description, speaker_cleaned, central_bank, file = file_name))
+  left_join(select(eurosystem_metadata, year, date, title, description, speaker_cleaned, central_bank, file = file_name, pdf_link))
 
 saveRDS(lda_data, here(data_path, 
                   "topic_modelling",

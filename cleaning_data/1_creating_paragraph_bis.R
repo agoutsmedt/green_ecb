@@ -4,6 +4,7 @@ source("packages_and_data.R")
 
 bis_data_path <- here(path.expand("~"),
                       "data",
+                      "central_banks",
                       "scrap_bis")
 
 data_files <- list.files(bis_data_path)
@@ -14,12 +15,15 @@ bis_text <- readRDS(here(bis_data_path,
   mutate(file = str_remove(file, "\\.pdf$"))
 
 # Complete by running OCR on problematic pdfs
+run_problem_ocr <- TRUE
+if(run_problem_ocr){
 problem_ocr <- read_csv2(here(bis_data_path,
                               "speech_in_need_of_OCR_corrected.csv"))
 
 pdf_files <- paste0(problem_ocr$file, ".pdf")
 path_pdf <- here(path.expand("~"),
                  "data",
+                 "central_banks",
                  "scrap_bis", 
                  "pdf")
 
@@ -27,7 +31,7 @@ new_text_ocr <- tribble(
   ~text, ~page, ~file
 )
 for(i in pdf_files){
-text <- tesseract::ocr(here(path_pdf, i), engine = tesseract("eng"))
+text <- tesseract::ocr(here(path_pdf, i), engine = tesseract::tesseract("eng"))
 text <- tibble(text) %>% 
   mutate(text = str_remove(text, ".+(=?\\\n)"),
          page = 1:n(),
@@ -39,6 +43,7 @@ new_text_ocr <- new_text_ocr %>%
 bis_text_updated <- bis_text %>% 
   filter(! file %in% problem_ocr$file) %>% 
   bind_rows(new_text_ocr)
+}
 
 ########### Add variables on bis metadata ########################
 
@@ -130,12 +135,12 @@ eurosystem_text_paragraph_cleaned <- eurosystem_text_paragraph %>%
 eurosystem_text_cleaned <- eurosystem_text_paragraph_cleaned %>% 
   mutate(problems = str_detect(paragraphs, "")) # problem of ocrisation
 
-test_ocr = FALSE
-if(test_ocr == TRUE) {
+test_ocr = TRUE
+if(test_ocr) {
 # save the list of speeches with problem of ocrisation (kind of loop with what has been
 # already ocrise before)
 test_ocr <- eurosystem_text_cleaned %>% 
-  filter(problems == TRUE) %>% 
+  filter(problems == TRUE) %>%
   ungroup() %>% 
   select(file) %>% 
   unique %>% 
@@ -144,6 +149,33 @@ test_ocr <- eurosystem_text_cleaned %>%
 
 test_ocr %>% 
   write_csv2(paste0(bis_data_path, "/speech_in_need_of_OCR_updated.csv"))
+}
+
+run_problem_ocr <- TRUE
+if(run_problem_ocr){
+  pdf_files <- paste0(test_ocr$file, ".pdf")
+  path_pdf <- here(path.expand("~"),
+                   "data",
+                   "central_banks",
+                   "scrap_bis", 
+                   "pdf")
+  
+  text_ocr <- tribble(
+    ~text, ~page, ~file
+  )
+  for(i in pdf_files){
+    text <- tesseract::ocr(here(path_pdf, i), engine = tesseract::tesseract("eng"))
+    text <- tibble(text) %>% 
+      mutate(text = str_remove(text, ".+(=?\\\n)"),
+             page = 1:n(),
+             file = str_remove(i, "\\.pdf"))
+    text_ocr <- text_ocr %>% 
+      bind_rows(text)
+  }
+  
+  bis_text_updated <- bis_text_updated %>% 
+    filter(! file %in% test_ocr$file) %>% 
+    bind_rows(text_ocr)
 }
 
 #
