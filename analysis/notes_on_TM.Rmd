@@ -13,7 +13,7 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, message = FALSE, cache = TRUE)
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, cache = TRUE, warning = FALSE)
 ```
 
 ```{js zoom-jquery, echo = FALSE}
@@ -78,6 +78,81 @@ topics_per_speech <- lda_data %>%
   
 ```
 
+```{r, summary-topics}
+# Calculate top frex and lift value for the topic 
+beta_lda <- tidy(lda, matrix = "beta") %>% 
+  group_by(topic) %>% 
+  slice_max(order_by = beta, n = 15, with_ties = FALSE) %>% 
+  mutate(rank_beta = 1:n()) %>% 
+  select(topic, term_beta = term, rank_beta, beta)
+
+frex_lda <- calculate_frex(lda, 15, 0.5, topic_method = "LDA") %>% 
+  group_by(topic) %>% 
+  slice_max(order_by = frex, n = 15, with_ties = FALSE) %>% 
+  ungroup() %>% 
+  select(term_frex = term, rank_frex = rank, frex)
+
+lda_words <- beta_lda %>% 
+  bind_cols(frex_lda)
+ 
+# Most representative speech
+top_speech_paragraphs <- lda_data %>% 
+  select(topic, document_id, title, date, speaker_cleaned, period, pdf_link, paragraphs, gamma) %>% 
+#  filter(central_bank %in% cb_focus) %>% 
+  group_by(topic) %>% 
+  slice_max(gamma, n = 15, with_ties = FALSE) %>% 
+  mutate(title_link = paste0("[", title, "](", pdf_link, ")"),
+         paragraphs = str_trunc(paragraphs, 1000, "right") %>% str_squish(),
+         gamma = round(gamma, 3)) %>% 
+  ungroup()
+
+top_speech <- topics_per_speech %>% 
+  select(topic, file, title, date, speaker_cleaned, period, pdf_link, gamma_speech) %>% 
+#  filter(central_bank %in% cb_focus) %>% 
+  group_by(topic) %>% 
+  slice_max(gamma_speech, n = 15, with_ties = FALSE) %>% 
+  mutate(title_link = paste0("[", title, "](", pdf_link, ")"),
+         gamma_speech = round(gamma_speech, 3)) %>% 
+  ungroup()
+
+# Most representative speech per period
+top_speech_paragraphs_period <- lda_data %>% 
+  select(topic, document_id, title, date, speaker_cleaned, period, pdf_link, paragraphs, period, gamma) %>% 
+  filter(! is.na(period)) %>% 
+  group_by(period, topic) %>% 
+  slice_max(gamma, n = 5, with_ties = FALSE) %>% 
+  mutate(title_link = paste0("[", title, "](", pdf_link, ")"),
+         paragraphs = str_trunc(paragraphs, 1500, "right") %>% str_squish(),
+         gamma = round(gamma, 3)) %>% 
+  ungroup()
+
+top_speech_period <- topics_per_speech %>% 
+  select(topic, file, title, date, speaker_cleaned, period, pdf_link, gamma_speech, period) %>% 
+  filter(! is.na(period)) %>% 
+  group_by(period, topic) %>% 
+  slice_max(gamma_speech, n = 5, with_ties = FALSE) %>% 
+  mutate(title_link = paste0("[", title, "](", pdf_link, ")"),
+         gamma_speech = round(gamma_speech, 3)) %>% 
+  ungroup()
+
+  
+# Looking at cbs
+#top_cb <- topics_per_speech %>% 
+ # .[, gamma_cb := mean(gamma_speech), by = .(topic, central_bank)] %>% 
+#  select(topic, central_bank, gamma_cb) %>% 
+ # unique() %>% 
+  #group_by(topic) %>% 
+  #slice_max(n = 5, order_by = gamma_cb, with_ties = FALSE)
+
+# ordering topics
+
+list_topics <- data_year_subset %>% 
+  mutate(prevalence = mean_Period_1 + mean_Period_2 + mean_Period_3) %>% 
+  arrange(desc(prevalence)) %>% 
+  mutate(topic_name = paste0("Topic ", topic, ": ", topic_name),
+         rank = 1:K)
+```
+
 # Selection of corpus
 
 We can imagine two types of methods to identify speeches about inflation in Eurosystem
@@ -114,17 +189,32 @@ As a first try, we use the LDA algorithm and we adopt the following specificatio
 - we remove all the words/bigrams/trigrams that had a TF-IDF value under the median TF-IDF value;
 - we run the model for 70 topics.
 
-## Exploration of the topic model
+## General presentation of the topic model
 
 Here is the list of the 70 topics, with the most representative ngrams. First, we look at "beta" values, which measure how much a ngram correspond to a topic.
 
-```{r lda-beta, eval=TRUE}
+```{r lda-beta, eval=FALSE}
 knitr::include_graphics(here::here("pictures", glue::glue("TM_top_beta_70_topics_LDA.png")))
 ```
 
-Then, we look at the FREX value, which takes into account both the correspondence of a unigram to a topic, and the fact that this unigram is not strongly associated to other topics. In other words, it lists unigrams that are stronlgy associated to a topic, and only this topic.
+Then, we look at the FREX value, which takes into account both the correspondence of a unigram to a topic, and the fact that this unigram is not strongly associated to other topics. In other words, it lists unigrams that are stronlgy associated to a topic, and only this topic. 
 
-```{r lda-frex, eval=TRUE}
+We also display the prevalence of each topic in our three periods.
+
+```{r topic-table}
+lda_words_collapsed <- lda_words %>% 
+  filter(rank_beta <= 10) %>% 
+  select(-starts_with("rank")) %>% 
+  group_by(topic) %>% 
+  summarise(across(starts_with("term"), ~str_flatten(., collapse = "; "))) %>%
+  left_join(select(list_topics, topic, starts_with("mean")))
+  
+kable(lda_words_collapsed) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F))
+```
+
+
+```{r lda-frex, eval=FALSE}
 knitr::include_graphics(here::here("pictures", glue::glue("TM_top_frex_70_topics_LDA.png")))
 ```
 
@@ -134,17 +224,13 @@ We can look at the evolution of the topics over time.
 knitr::include_graphics(here::here("pictures", glue::glue("TM_LDA_topic_per_date.png")))
 ```
 
-6 topics are of more interest for us: they are significant topics about inflation, at different moment of the 
-ECB history: 17, 37, 48, 63, 20, 56.
 
-```{r lda-date-cb, eval=TRUE}
-knitr::include_graphics(here::here("pictures", glue::glue("TM_LDA_main_topic_per_date.png")))
-```
 
-We can also focus only on the two periods of interests:
+We can also focus only on the three periods of interests:
 
-- the speeches between January 2006 and August 2008;
-- the speeches since October 2021.
+- the speeches between 1998 and August 2011;
+- the speeches between August 2011 and August 2021;
+- the speeches since September 2021.
 
 We can look at how much a topic is prevalent, depending on the period:
 
@@ -161,91 +247,93 @@ knitr::include_graphics(here::here("pictures", glue::glue("TM_differential_LDA_t
 knitr::include_graphics(here::here("pictures", glue::glue("TM_differential_LDA_topic_period_per_cb.png")))
 ```
 
-# Exploration of the topics
+# Focus on specific topics
 
-```{r summary-topics, results = "asis", eval=TRUE}
-# Calculate top frex and lift value for the topic 
-beta_lda <- tidy(lda, matrix = "beta") %>% 
-  group_by(topic) %>% 
-  slice_max(order_by = beta, n = 15, with_ties = FALSE) %>% 
-  mutate(rank_beta = 1:n()) %>% 
-  select(topic, term_beta = term, rank_beta, beta)
+4 topics are representative of the "logics of responsibility": 22, 28 and 37.
 
-frex_lda <- calculate_frex(lda, 15, 0.5, topic_method = "LDA") %>% 
-  group_by(topic) %>% 
-  slice_max(order_by = frex, n = 15, with_ties = FALSE) %>% 
-  ungroup() %>% 
-  select(term_frex = term, rank_frex = rank, frex)
+```{r responsibility}
+plot <- lda_data %>% 
+  filter(topic %in% c(17, 22, 28, 37, 43)) %>% 
+  mutate(topic_name = paste0("topic ", topic, ": ", str_wrap(topic_name, 30))) %>% 
+  ggplot(aes(date, gamma, color = topic_name)) +
+  geom_smooth(show.legend = FALSE, method = "loess", span = 0.3) +
+  geom_vline(xintercept = lubridate::date(c("2011-11-08", "2021-09-01"))) +
+ # geom_rect(data=rects, inherit.aes=FALSE, aes(xmin=start, xmax=end,), ymax = 1, ymin = 0, color="transparent", fill="grey", alpha=0.3) +
+  facet_wrap(~ topic_name, ncol = 2) +
+  theme(strip.text = element_text (size = 9)) +
+  labs(x = NULL,
+       y = "Gamma value",
+       title = "Prevalence of topics over time - the logics of responsibility")
 
-lda_words <- beta_lda %>% 
-  bind_cols(frex_lda)
- 
-# Most representative speech
-top_speech_paragraphs <- lda_data %>% 
-  select(topic, document_id, title, date, speaker_cleaned, central_bank, pdf_link, paragraphs, gamma) %>% 
-#  filter(central_bank %in% cb_focus) %>% 
-  group_by(topic) %>% 
-  slice_max(gamma, n = 15) %>% 
-  mutate(title_link = paste0("[", title, "](", pdf_link, ")"),
-         paragraphs = str_trunc(paragraphs, 1000, "right") %>% str_squish(),
-         gamma = round(gamma, 3)) %>% 
-  ungroup()
+ggsave(here("pictures", glue::glue("responsibility_topics.png")), plot,
+       device = ragg::agg_png,
+       width = 30, height = 30, units = "cm", res = 300)
 
-top_speech <- topics_per_speech %>% 
-  select(topic, file, title, date, speaker_cleaned, central_bank, pdf_link, gamma_speech) %>% 
-#  filter(central_bank %in% cb_focus) %>% 
-  group_by(topic) %>% 
-  slice_max(gamma_speech, n = 15) %>% 
-  mutate(title_link = paste0("[", title, "](", pdf_link, ")"),
-         gamma_speech = round(gamma_speech, 3)) %>% 
-  ungroup()
+knitr::include_graphics(here::here("pictures", glue::glue("responsibility_topics.png")))
 
-# Most representative speech per period
-top_speech_paragraphs_period <- lda_data %>% 
-  select(topic, document_id, title, date, speaker_cleaned, central_bank, pdf_link, paragraphs, period, gamma) %>% 
-  filter(! is.na(period)) %>% 
-  group_by(period, topic) %>% 
-  slice_max(gamma, n = 5) %>% 
-  mutate(title_link = paste0("[", title, "](", pdf_link, ")"),
-         paragraphs = str_trunc(paragraphs, 1500, "right") %>% str_squish(),
-         gamma = round(gamma, 3)) %>% 
-  ungroup()
+```
 
-top_speech_period <- topics_per_speech %>% 
-  select(topic, file, title, date, speaker_cleaned, central_bank, pdf_link, gamma_speech, period) %>% 
-  filter(! is.na(period)) %>% 
-  group_by(period, topic) %>% 
-  slice_max(gamma_speech, n = 5) %>% 
-  mutate(title_link = paste0("[", title, "](", pdf_link, ")"),
-         gamma_speech = round(gamma_speech, 3)) %>% 
-  ungroup()
 
-  
-# Looking at cbs
-#top_cb <- topics_per_speech %>% 
- # .[, gamma_cb := mean(gamma_speech), by = .(topic, central_bank)] %>% 
-#  select(topic, central_bank, gamma_cb) %>% 
- # unique() %>% 
-  #group_by(topic) %>% 
-  #slice_max(n = 5, order_by = gamma_cb, with_ties = FALSE)
+5 topics are representative of the "logics of responsiveness":
 
-# ordering topics
+```{r responsiveness}
+plot <- lda_data %>% 
+  filter(topic %in% c(3, 10, 34, 40, 48, 63)) %>% 
+  mutate(topic_name = paste0("topic ", topic, ": ", str_wrap(topic_name, 30))) %>% 
+  ggplot(aes(date, gamma, color = topic_name)) +
+  geom_smooth(show.legend = FALSE, method = "loess", span = 0.3) +
+  geom_vline(xintercept = lubridate::date(c("2011-11-08", "2021-09-01"))) +
+ # geom_rect(data=rects, inherit.aes=FALSE, aes(xmin=start, xmax=end,), ymax = 1, ymin = 0, color="transparent", fill="grey", alpha=0.3) +
+  facet_wrap(~ topic_name, ncol = 2) +
+  theme(strip.text = element_text (size = 9)) +
+  labs(x = NULL,
+       y = "Gamma value",
+       title = "Prevalence of topics over time - the logics of responsiveness")
 
-list_topics <- data_year_subset %>% 
-  mutate(prevalence = mean_Period_1 + mean_Period_2 + mean_Period_3) %>% 
-  arrange(desc(prevalence)) %>% 
-  mutate(topic_name = paste0("Topic ", topic, ": ", topic_name),
-         rank = 1:K)
+ggsave(here("pictures", glue::glue("responsiveness_topics.png")), plot,
+       device = ragg::agg_png,
+       width = 30, height = 30, units = "cm", res = 300)
 
-for(i in 1:K){
+knitr::include_graphics(here::here("pictures", glue::glue("responsiveness_topics.png")))
+```
+
+3 topics are representative of the recent period:
+
+```{r polycrisis}
+plot <- lda_data %>% 
+  filter(topic %in% c(20, 56, 63)) %>% 
+  mutate(topic_name = paste0("topic ", topic, ": ", str_wrap(topic_name, 30))) %>% 
+  ggplot(aes(date, gamma, color = topic_name)) +
+  geom_smooth(show.legend = FALSE, method = "loess", span = 0.3) +
+  geom_vline(xintercept = lubridate::date(c("2011-11-08", "2021-09-01"))) +
+ # geom_rect(data=rects, inherit.aes=FALSE, aes(xmin=start, xmax=end,), ymax = 1, ymin = 0, color="transparent", fill="grey", alpha=0.3) +
+  facet_wrap(~ topic_name, ncol = 2) +
+  theme(strip.text = element_text (size = 9)) +
+  labs(x = NULL,
+       y = "Gamma value",
+       title = "Prevalence of topics over time - the polycrisis")
+
+ggsave(here("pictures", glue::glue("polycrisis_topics.png")), plot,
+       device = ragg::agg_png,
+       width = 30, height = 30, units = "cm", res = 300)
+
+knitr::include_graphics(here::here("pictures", glue::glue("polycrisis_topics.png")))
+```
+
+# Information on all the topics
+
+```{r plot-topics, results = "asis", eval=TRUE}
+
+for(i in list_topics$topic[-c(3, 34, 59)]){
 topic_stats <- list_topics %>% 
-  filter(rank == i)
+  filter(topic == i)
 
 #list_cb <- paste0(filter(top_cb, topic == topic_stats$topic)$central_bank, " (", round(filter(top_cb, topic == i)$gamma_cb, 4), ")", collapse = "; ")
+
   ################ Beginning of the template ######################
-  cat("## ", list_topics$topic_name[i], "\n")
+  cat("## ", topic_stats$topic_name, "\n")
   cat(paste0("The topic is ranked ",
-             i,
+             topic_stats$rank,
              " in terms of prevalence over the three periods. The topic displays a prevalence for the first period (1998-2011) of ",
              round(topic_stats$mean_Period_1, 4),
              "for the second period (2011-2021) of ",
@@ -256,37 +344,83 @@ topic_stats <- list_topics %>%
 
   
   cat("###", "Describing Topics in general \n\n")
-  cat("The most common terms according to different indicators:")
-  cat("\n\n")
+  cat("The most common terms according to different indicators:\n\n")
   print(kable(filter(lda_words, topic == topic_stats$topic)) %>%
           kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
   cat("\n\n")
   
-  cat("The most representative paragraphs:")
-  cat("\n\n")
-  print(kable(filter(top_speech_paragraphs, topic == topic_stats$topic) %>% select(title_link, central_bank, date, gamma, paragraphs)) %>%
+  cat("The most representative paragraphs:\n\n")
+  print(kable(filter(top_speech_paragraphs, topic == topic_stats$topic) %>% select(title_link, period, date, gamma, paragraphs)) %>%
           kable_styling(bootstrap_options = c("striped", "condensed", full_width = F), font_size = 12))
   cat("\n\n")
   
-    cat("The most representative speeches:")
-  cat("\n\n")
-  print(kable(filter(top_speech, topic == topic_stats$topic) %>% select(title_link, central_bank, date, gamma_speech)) %>%
+    cat("The most representative speeches:\n\n")
+  print(kable(filter(top_speech, topic == topic_stats$topic) %>% select(title_link, period, date, gamma_speech)) %>%
           kable_styling(bootstrap_options = c("striped", "condensed", full_width = F), font_size = 12))
   cat("\n\n")
   
    cat("###", "Describing Topics for the 3 periods \n\n")
-  cat("We list the 5 most representative paragraphs for each central bank, for each period:")
-  cat("\n\n")
-  print(kable(filter(top_speech_paragraphs_period, topic == topic_stats$topic) %>% select(title_link, central_bank, date, gamma, paragraphs)) %>%
+  cat("We list the 5 most representative paragraphs for each central bank, for each period:\n\n")
+  print(kable(filter(top_speech_paragraphs_period, topic == topic_stats$topic) %>% select(title_link, period, date, gamma, paragraphs)) %>%
           kable_styling(bootstrap_options = c("striped", "condensed", full_width = F), font_size = 12))
   cat("\n\n")
   
-    cat("The most representative speeches:")
-  cat("\n\n")
-  print(kable(filter(top_speech_period, topic == topic_stats$topic) %>% select(title_link, central_bank, date, gamma_speech)) %>%
+    cat("The most representative speeches:\n\n")
+  print(kable(filter(top_speech_period, topic == topic_stats$topic) %>% select(title_link, period, date, gamma_speech)) %>%
           kable_styling(bootstrap_options = c("striped", "condensed", full_width = F), font_size = 12))
   cat("\n\n")
-  
-  cat("\n\n")
+
 }
 ```
+
+```{r weird-topics, results = "asis", eval=TRUE}
+for(i in list_topics$topic[c(3, 34, 59)]){
+topic_stats <- list_topics %>% 
+  filter(topic == i)
+
+#list_cb <- paste0(filter(top_cb, topic == topic_stats$topic)$central_bank, " (", round(filter(top_cb, topic == i)$gamma_cb, 4), ")", collapse = "; ")
+
+  ################ Beginning of the template ######################
+  cat("## ", topic_stats$topic_name, "\n")
+  cat(paste0("The topic is ranked ",
+             topic_stats$rank,
+             " in terms of prevalence over the three periods. The topic displays a prevalence for the first period (1998-2011) of ",
+             round(topic_stats$mean_Period_1, 4),
+             "for the second period (2011-2021) of ",
+             round(topic_stats$mean_Period_2, 4),
+             "and for the third period (2021-2023) of ",
+             round(topic_stats$mean_Period_3, 4),
+             ".\n\n"))
+
+  
+  cat("###", "Describing Topics in general \n\n")
+  cat("The most common terms according to different indicators:\n\n")
+  print(kable(filter(lda_words, topic == topic_stats$topic)) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  
+  cat("The most representative paragraphs:\n\n")
+  print(kable(filter(top_speech_paragraphs, topic == topic_stats$topic) %>% select(title_link, period, date, gamma, paragraphs)) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F), font_size = 12))
+  cat("\n\n")
+  
+    cat("The most representative speeches:\n\n")
+  print(kable(filter(top_speech, topic == topic_stats$topic) %>% select(title_link, period, date, gamma_speech)) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F), font_size = 12))
+  cat("\n\n")
+  
+   cat("###", "Describing Topics for the 3 periods \n\n")
+  cat("We list the 5 most representative paragraphs for each central bank, for each period:\n\n")
+  print(kable(filter(top_speech_paragraphs_period, topic == topic_stats$topic) %>% select(title_link, period, date, gamma, paragraphs)) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F), font_size = 12))
+  cat("\n\n")
+  
+    cat("The most representative speeches:\n\n")
+  print(kable(filter(top_speech_period, topic == topic_stats$topic) %>% select(title_link, period, date, gamma_speech)) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F), font_size = 12))
+  cat("\n\n")
+
+}
+```
+
+

@@ -10,32 +10,84 @@ term_list_filtered <- readRDS(here(data_path, "topic_modelling","TM_term_list_in
 
 #' We transform the list of term pre-established in a Document Term Matrix and we filter.
 #' (Ideally, different filters should be tested)
+nb_docs <- length(unique(term_list_filtered$document_id))
 dtm <- term_list_filtered %>%
-  .[, freq := .N, by = c("document_id", "term")] %>%  
-  select(doc_id = document_id, term, freq) %>% 
-  document_term_matrix()
-dtm_filtered   <- dtm_remove_lowfreq(dtm, minfreq = 10) %>% 
-  dtm_remove_tfidf(prob = 0.50)
+  .[, total_freq := .N, by = "term"] %>% 
+  .[, doc_freq := .N, by = c("document_id", "term")] %>%  
+  unique() %>% 
+  .[, share_of_doc := .N/nb_docs, by = "term"]
+
+# We want to have a look at what we are deleting
+look_words_keep <- FALSE
+if(look_words_keep){
+dtm <- dtm %>% 
+  mutate(threshold_nb_doc = case_when(share_of_doc > 0.70 ~ ">70%",
+                                    share_of_doc > 0.60 ~ ">60%",
+                                    share_of_doc > 0.50 ~ ">50%",
+                                    share_of_doc > 0.40 ~ ">40%",
+                                    share_of_doc > 0.30 ~ ">30%",
+                                    TRUE ~ "<30%"),
+         threshold_freq = case_when(total_freq < 10 ~ "<10",
+                                    total_freq < 15 ~ "<15",
+                                    total_freq < 20 ~ "<20",
+                                    total_freq < 25 ~ "<25",
+                                    total_freq < 30 ~ "<30",
+                                    TRUE ~ ">30")) %>% 
+  select(term, share_of_doc, total_freq, threshold_nb_doc, threshold_freq) %>% 
+  unique %>% 
+  View()
+}
+
+list_dtm <- tibble("total_freq" = c(5,10,20)) %>% 
+  mutate(data = map(total_freq, ~filter(dtm,
+                                 share_of_doc < 0.50,
+                                 total_freq >= .) %>% 
+               cast_dtm(document_id, term, doc_freq)))
+
+
+
 
 #' We use the `ldatuning` package to test different value of the number of topics.
+
+optimisation_data <- list()
+for(i in seq_along(list_dtm$total_freq)){
 optimised_lda <- ldatuning::FindTopicsNumber(
-  dtm_filtered,
-  topics = seq(from = 20, to = 90, by = 10),
+  list_dtm$data[[i]],
+  topics = seq(from = 4, to = 6, by = 2),
   metrics = c("Griffiths2004", "CaoJuan2009", "Arun2010", "Deveaud2014"),
+  return_models = TRUE,
   method = "Gibbs",
   control = list(seed = 77),
   mc.cores = 2,
   verbose = TRUE
 )
 saveRDS(optimised_lda, here(data_path, 
-                  "topic_modelling",
-                  paste0("LDA_optimized.rds")))
+                            "topic_modelling",
+                            paste0("LDA_optimized_preprocessing_", i, ".rds")))
+optimisation_data[[paste(i)]] <- tibble(optimised_lda)
+}
 
-ldatuning::FindTopicsNumber_plot(optimised_lda)
+optimised_lda <- bind_rows(optimisation_data, .id = "preprocessing") %>% 
+  pivot_longer(matches("\\d$"), names_to = "measure", values_to = "values") %>% 
+  mutate(direction = ifelse(str_detect(measure, "^Cao|^Arun"), "minimize", "maximize")) %>% #
+  group_by(measure) %>% 
+  mutate(rescaled_values = scales::rescale(values))
+  
+
+ggplot(optimised_lda, aes(topics, rescaled_values, linetype = measure, color = preprocessing)) + 
+  geom_line(alpha = 0.8) + 
+  facet_wrap(~direction, ncol = 1, scales = "free_y")
+
 
 #' We select the number of topics depending on the analysis above.
 K = 70
-lda <- topicmodels::LDA(dtm_filtered, k = K, method = "Gibbs", control = list(seed = 1989))
+lda <- topicmodels::LDA(list_dtm$data[[1]], k = K, method = "Gibbs", control = list(seed = 1989))
+lda_model <- text2vec::LDA$new(list_dtm$data[[1]])
+doc_topic_distr = 
+  lda_model$fit_transform(x = list_dtm$data[[1]], n_iter = 1000, 
+                          convergence_tol = 0.001, n_check_convergence = 25, 
+                          progressbar = TRUE)
+
 
 saveRDS(lda, here(data_path, 
                           "topic_modelling",
