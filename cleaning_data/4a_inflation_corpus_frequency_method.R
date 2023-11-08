@@ -41,6 +41,7 @@ stats_inflation_texts <- eurosystem_metadata %>%
   unique() %>% 
   pivot_longer(cols = c(number_files, contains("threshold")), names_to = "type_of_speech", values_to = "count")
 
+stats_inflation_texts$type_of_speech %>% unique()
 stats_inflation_texts %>% 
   ggplot(aes(x = year, y = count, fill = fct_inorder(type_of_speech))) +
   geom_col(position = "identity", alpha = 0.9) +

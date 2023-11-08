@@ -53,7 +53,11 @@ optimisation_data <- list()
 for(i in seq_along(list_dtm$total_freq)){
 optimised_lda <- ldatuning::FindTopicsNumber(
   list_dtm$data[[i]],
+<<<<<<< HEAD
   topics = seq(from = 30, to = 110, by = 5),
+=======
+  topics = seq(from = 4, to = 6, by = 2),
+>>>>>>> 94e4769367dc1858bff47b054eabd826cd2681e7
   metrics = c("Griffiths2004", "CaoJuan2009", "Arun2010", "Deveaud2014"),
   return_models = TRUE,
   method = "Gibbs",
@@ -72,6 +76,7 @@ optimised_lda <- bind_rows(optimisation_data, .id = "preprocessing") %>%
   mutate(direction = ifelse(str_detect(measure, "^Cao|^Arun"), "minimize", "maximize")) %>% #
   group_by(measure) %>% 
   mutate(rescaled_values = scales::rescale(values))
+<<<<<<< HEAD
 
 saveRDS(optimised_lda, here(data_path, 
                             "topic_modelling",
@@ -145,6 +150,23 @@ saveRDS(optimised_lda, here(data_path,
 #' 
 K = 70
 lda <- topicmodels::LDA(list_dtm$data[[1]], k = K, method = "Gibbs", control = list(seed = 1989))
+=======
+  
+
+ggplot(optimised_lda, aes(topics, rescaled_values, linetype = measure, color = preprocessing)) + 
+  geom_line(alpha = 0.8) + 
+  facet_wrap(~direction, ncol = 1, scales = "free_y")
+
+
+#' We select the number of topics depending on the analysis above.
+K = 70
+lda <- topicmodels::LDA(list_dtm$data[[1]], k = K, method = "Gibbs", control = list(seed = 1989))
+lda_model <- text2vec::LDA$new(list_dtm$data[[1]])
+doc_topic_distr = 
+  lda_model$fit_transform(x = list_dtm$data[[1]], n_iter = 1000, 
+                          convergence_tol = 0.001, n_check_convergence = 25, 
+                          progressbar = TRUE)
+>>>>>>> 94e4769367dc1858bff47b054eabd826cd2681e7
 
 
 saveRDS(lda, here(data_path, 
@@ -155,11 +177,16 @@ saveRDS(lda, here(data_path,
 #' 
 #' We can now analyse the results of the model saved
 #' `lda <- readRDS(here(data_path, "topic_modelling", paste0("LDA_70.rds")))`
+<<<<<<< HEAD
 #' `list_lda <- readRDS(here(data_path, "topic_modelling", "LDA_optimized_preprocessing_all.rds"))`
 #' 
 #' We can plot the top frex and beta words for each topic
 tidy(optimised_lda$LDA_model[[1]], matrix = "gamma")
 tidy(optimised_lda$LDA_model[[1]])
+=======
+#' 
+#' We can plot the top frex and beta words for each topic
+>>>>>>> 94e4769367dc1858bff47b054eabd826cd2681e7
 
 beta_lda <- tidy(lda, matrix = "beta")
 top_beta_graph <- beta_lda %>%

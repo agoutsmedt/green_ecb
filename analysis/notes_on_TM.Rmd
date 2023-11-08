@@ -34,6 +34,7 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE, cache = TRUE, warning = FALS
   });
 ```
 
+
 ```{r loading}
 # load packages, paths, and the macro plateform data
 library(tidyverse)
@@ -158,7 +159,6 @@ list_topics <- data_year_subset %>%
 # Introduction
 
 
-
 # Selection of corpus
 
 We can imagine two types of methods to identify speeches about inflation in Eurosystem
@@ -270,7 +270,6 @@ knitr::include_graphics(here::here("pictures", glue::glue("TM_differential_LDA_t
 ```{r lda-period-differential-cb, eval=FALSE}
 knitr::include_graphics(here::here("pictures", glue::glue("TM_differential_LDA_topic_period_per_cb.png")))
 ```
-
 
 We have `r lda_data |> dplyr::filter(inflation_topic == TRUE) |> dplyr::distinct(topic) |> nrow()` on inflation and price stability.
 
@@ -397,5 +396,3 @@ topic_stats <- list_topics %>%
 
 }
 ```
-
-

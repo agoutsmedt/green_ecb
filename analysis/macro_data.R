@@ -47,6 +47,7 @@ data <- bind_rows(inflation,
                   growth,
                   balance_sheet)
 
+<<<<<<< HEAD
 
 macro_plot <- data %>% 
   filter(type != "balance_sheet") %>% 
@@ -160,3 +161,29 @@ plot_2 <- data %>%
 ggsave(here("pictures", glue::glue("wage_profit_reduce.png")), plot_2,
        device = ragg::agg_jpeg,
        width = 20, height = 15, units = "cm", res = 600)
+=======
+macro_plot <- data %>% 
+  mutate(type_2 = ifelse(type == "balance_sheet", "ECB Balance Sheet", "Macroeconomic data")) %>% 
+  ggplot(aes(obstime, obsvalue, color = type)) + 
+  geom_step(data = . %>% filter(type == "interest_rates"), linewidth = 1) +
+  geom_line(data = . %>% filter(type %in% c("balance_sheet", "inflation")), linewidth = 1) +
+  geom_smooth(data = . %>% filter(type == "growth"), 
+              se = FALSE, span = 0.2, method = "loess", linewidth = 1) +
+  geom_vline(xintercept = date(c("2011-11-08", "2021-09-01"))) +
+  facet_wrap(~ fct_inorder(type_2), ncol = 1, scales = "free_y") + 
+  scale_color_discrete(name = NULL,
+                       labels = c("Eurosystem Total Assets",
+                                  "GDP Yearly Growth\n(Smoothed)",
+                                  "HICP Inflation",
+                                  "Main Refinancing Operation\n(Key Interest Rate)")) +
+  labs(y = NULL,
+       x = NULL) +
+  xlim(date("1999-01-01"), date("2023-02-01"))
+
+ggsave(here::here("pictures", glue::glue("macro_data.png")), macro_plot,
+       device = ragg::agg_png,
+       width = 30, height = 20, units = "cm", res = 300)
+
+
+
+>>>>>>> 94e4769367dc1858bff47b054eabd826cd2681e7
