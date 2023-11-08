@@ -4,3 +4,6 @@
 .Ruserdata
 pictures
 *.html
+*.tiff
+*.jpeg
+analysis/notes_on_TM_cache

@@ -1,0 +1,214 @@
+---
+title: "Producing Article Visualisation"
+author: "Aurélien Goutsmedt and Clément Fontan"
+date: "`r Sys.Date()`" 
+output: 
+  html_document:
+    theme: united
+    toc: true
+    number_sections: true
+    toc_float: true
+    toc_depth: 3
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, cache = TRUE, warning = FALSE)
+```
+
+```{js zoom-jquery, echo = FALSE}
+ $(document).ready(function() {
+    $('body').prepend('<div class=\"zoomDiv\"><img src=\"\" class=\"zoomImg\"></div>');
+    // onClick function for all plots (img's)
+    $('img:not(.zoomImg)').click(function() {
+      $('.zoomImg').attr('src', $(this).attr('src')).css({width: '100%'});
+      $('.zoomDiv').css({opacity: '1', width: 'auto', border: '1px solid white', borderRadius: '5px', position: 'fixed', top: '50%', left: '50%', marginRight: '-50%', transform: 'translate(-50%, -50%)', boxShadow: '0px 0px 50px #888888', zIndex: '50', overflow: 'auto', maxHeight: '100%'});
+    });
+    // onClick function for zoomImg
+    $('img.zoomImg').click(function() {
+      $('.zoomDiv').css({opacity: '0', width: '0%'}); 
+    });
+  });
+```
+
+```{r loading}
+# load packages, paths, and the macro plateform data
+library(tidyverse)
+library(data.table)
+library(here)
+library(kableExtra)
+library(tidytext)
+library(DT)
+library(patchwork)
+library(RColorBrewer)
+data_path <- "C:/Users/goutsmedt/Documents/MEGAsync/Research/R/projets/data/green_ecb_responsiveness"
+picture_path <- "C:/Users/goutsmedt/Dropbox/GreenCBreput/article_pictures"
+source(here(path.expand("~"), "green_ecb", "function", "functions_for_topic_modelling.R"))
+source(here(path.expand("~"), "green_ecb", "packages_and_data.R"))
+K = 120
+
+# Load terms
+
+eurosystem_metadata <- readRDS(here(data_path, "eurosystem_metadata_inflation.rds")) %>% 
+  arrange(file_name)
+eurosystem_text <- readRDS(here(data_path, "eurosystem_text_inflation.rds")) %>% 
+  as.data.table() %>% 
+  left_join(select(eurosystem_metadata, date, file = file_name)) %>% 
+  arrange(date, document_id) %>%
+  mutate(year = lubridate::year(date))
+
+# load the topics stats and gamma attributes
+lda <- readRDS(here(data_path, "topic_modelling", paste0("LDA_", K, ".rds")))
+lda_data <- readRDS(here(data_path, 
+             "topic_modelling",
+             paste0("LDA_", K, "_data.rds"))) %>% 
+  as.data.table() %>% 
+  .[, period := case_when(between(date, "1998-11-20", "2011-11-08") ~ "Period_1",
+                            between(date, "2011-11-08", "2021-09-01") ~ "Period_2",
+                            between(date, "2021-09-01", "2023-02-01") ~ "Period_3")] %>% 
+  .[, topic_name := paste0("topic ", topic, ": ", topic_name)]
+
+
+lda_proximity <- readRDS(here(data_path, 
+                                     "topic_modelling",
+                                     "similarities_LDA.rds"))
+```
+
+```{r isolate-topics}
+isolate_topic <- function(lda_data, topic_number, dates, values){
+  data_labels <- tibble(topic_name = filter(lda_data, topic %in% topic_number) %>% pull(topic_name) %>% unique(), 
+                      date = as_date(dates), 
+                      gamma = values) %>% 
+    arrange(topic_name)
+  
+  plot <- lda_data %>% 
+    filter(topic %in% topic_number) %>% 
+    ggplot(aes(date, gamma, color = topic_name)) +
+    geom_smooth(aes(linetype = topic_name), show.legend = FALSE, method = "loess", span = 0.2, se = FALSE) +
+    geom_vline(xintercept = date(c("2011-11-08", "2021-09-01")), linetype = "dashed", alpha = 0.5) +
+    geom_label(data = data_labels,
+               aes(date, gamma, label = str_wrap(topic_name, 30)),
+               size = 2.2,
+               show.legend = FALSE) +
+    scale_x_date(expand = c(0,0.1), date_breaks = "2 years", date_labels = "%Y", limits = as_date(c("1999-01-01", "2023-01-31"))) + 
+    scale_color_grey(start = 0.6, end = 0) +
+    labs(x = NULL,
+         y = "Topic prevalence",
+         color = NULL) +
+    theme_light(base_size = 8)
+}
+```
+
+
+```{r price-stability}
+topic_number <- c(14, 40, 80)
+plot <- isolate_topic(lda_data, 
+                      topic_number, 
+                      c("2001-09-01", "2001-04-01", "2010-05-01"), 
+                      c(0.03, 0.0135, 0.035))
+
+ggsave(here(picture_path, glue::glue("Figure_2_plot_topic_{paste(topic_number, collapse = '_')}.tiff")),
+       plot,
+       device = ragg::agg_tiff,
+       width = 16, height = 10, units = "cm", dpi = 300)
+```
+
+```{r structural-reforms}
+topic_number <- c(16, 63)
+plot <- isolate_topic(lda_data, 
+                      topic_number, 
+                      c("2017-04-01", "2011-01-01"),
+                      c(0.019, 0.03))
+
+ggsave(here(picture_path, glue::glue("Figure_3_plot_topic_{paste(topic_number, collapse = '_')}.tiff")),
+       plot,
+       device = ragg::agg_tiff,
+       width = 16, height = 10, units = "cm", dpi = 300)
+```
+
+```{r stagflation-era}
+topic_number <- c(4, 28, 57, 92)
+plot <- isolate_topic(lda_data, 
+                      topic_number, 
+                      c("2016-06-01", "2001-11-01", "2010-10-01", "2021-01-01"),
+                      c(0.0305, 0.007, 0.035, 0.027))
+
+ggsave(here(picture_path, glue::glue("Figure_4_plot_topic_{paste(topic_number, collapse = '_')}.tiff")),
+       plot,
+       device = ragg::agg_tiff,
+       width = 16, height = 10, units = "cm", dpi = 300)
+
+topic_number <- c(13, 20, 21)
+plot <- isolate_topic(lda_data, 
+                      topic_number, 
+                      c("2014-01-01", "2016-02-01", "2011-04-01"),
+                      c(0.018, 0.041, 0.009))
+
+ggsave(here(picture_path, glue::glue("Figure_5_plot_topic_{paste(topic_number, collapse = '_')}.tiff")),
+       plot,
+       device = ragg::agg_tiff,
+       width = 16, height = 10, units = "cm", dpi = 300)
+```
+
+```{r new-inflation}
+topic_number_1 <- c(30,58)
+plot_1 <- isolate_topic(lda_data, 
+                      topic_number_1, 
+                      c("2019-04-01", "2015-05-01"),
+                      c(0.0165, 0.0125))
+
+topic_number_2 <- c(35, 60)
+plot_2 <- isolate_topic(lda_data, 
+                      topic_number_2, 
+                      c("2016-05-01", "2004-06-01"),
+                      c(0.014, 0.0145))
+
+plot <- plot_1 / plot_2 +
+  plot_layout(guides = "collect")
+
+ggsave(here(picture_path, glue::glue("Figure_7_plot_topic_{paste(topic_number_1, topic_number_2, collapse = '_')}.tiff")),
+       plot,
+       device = ragg::agg_tiff,
+       width = 16, height = 11, units = "cm", dpi = 300)
+```
+
+```{r validation-topics}
+topic_number <- c(89, 4, 34, 15, 12)
+plot <- isolate_topic(lda_data, 
+                      topic_number, 
+                      c("2015-03-01", "2021-11-01", "2019-06-01", "2009-02-01", "2002-03-01"),
+                      c(0.031, 0.021, 0.033, 0.022, 0.02))
+
+ggsave(here("pictures", "plot_validation.tiff"),
+       plot,
+       device = ragg::agg_tiff,
+       width = 16, height = 10, units = "cm", dpi = 300)
+```
+
+
+```{r freq-price-stability}
+eurosystem_text[, `:=` (nb_words = str_count(paragraphs), freq_paragraph = str_count(paragraphs, "price stability"))]
+eurosystem_text[, `:=` (total_words = sum(nb_words), total_freq_paragraph =  sum(freq_paragraph)), by = "date"]
+eurosystem_text[, freq_ps := total_freq_paragraph/total_words]
+
+eurosystem_text %>% 
+  distinct(date, freq_ps) %>% 
+  ggplot(aes(x = date, y = freq_ps)) +
+  geom_smooth(method = "loess", span = 0.2, se = FALSE, color = "black") +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y", expand = c(0,0), limits = as_date(c("1999-01-01", "2023-01-31"))) +
+  scale_y_continuous(labels = scales::label_percent()) +
+  theme_light() +
+  labs(x = NULL,
+       y = NULL) +
+  ggplot2::annotate(geom = "text", 
+                    label = "frac(Frequency_price_stability[t], Total_words[t])", 
+                    parse = TRUE,
+                    x = as_date("2017-06-01"), 
+                    y = 0.00072,
+                    size = 4)
+
+ggsave(here(picture_path, glue::glue("Figure_6_price_stability_frequency.tiff")),
+       device = ragg::agg_tiff,
+       width = 16, height = 8, units = "cm", dpi = 300)
+```
+

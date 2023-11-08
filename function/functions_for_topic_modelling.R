@@ -305,8 +305,15 @@ plot_topicmodels_stat <- function(data, size = 1, weight_1 = 0.5, weight_2 = 0.3
 #' 
 #' Inspired by the STM package but a bit revisited to fit with our goals
 
-calculate_frex <- function(model, nb_terms = nb_terms, w = w) {
-  logbeta <- model$beta$logbeta[[1]]
+calculate_frex <- function(model, nb_terms = nb_terms, w = w, topic_method = c("STM", "LDA")) {
+  if(topic_method == "LDA"){
+    logbeta <- tidy(model, matrix = "beta", log = TRUE) %>%
+      tidytext::cast_dfm(topic, term, beta) %>% 
+      as.matrix()
+  } else {
+    logbeta <- model$beta$logbeta[[1]]   
+  }
+
   
   col.lse <- function(mat) {
     matrixStats::colLogSumExps(mat)
@@ -316,9 +323,16 @@ calculate_frex <- function(model, nb_terms = nb_terms, w = w) {
   freqscore <- apply(logbeta,1,data.table::frank)/ncol(logbeta)
   exclscore <- apply(excl,1,data.table::frank)/ncol(logbeta)
   frex <- 1/(w/freqscore + (1-w)/exclscore)
-  frex <- data.table("term" = model$vocab,
+  
+  if(topic_method == "LDA"){
+    terms <- tidy(model, matrix = "beta", log = TRUE)$term %>% unique()
+  } else {
+    terms <- model$vocab  
+  }
+  
+  frex <- data.table("term" = terms,
                      as.data.table(frex)) %>% 
-    pivot_longer(cols = starts_with("V"), 
+    pivot_longer(cols = where(is.numeric), 
                  names_to = "topic", 
                  values_to = "frex") %>%
     mutate(topic = as.integer(str_remove(topic, "V"))) %>% 
@@ -579,3 +593,44 @@ several_extract.estimateEffect<- function(i,
                          moderator = moderator,
                          moderator.value = i)
 }
+
+
+#' Intruders method with a list of topicmodels models
+#' 
+generate_intruder_list <- function(list_top_words,
+                                   nb_check_words = 5,
+                                   nb_intruders = 1){
+  
+  vocabs <- list_top_words %>% 
+    pull(term) %>% 
+    unique()
+  
+  intruders <- list_top_words %>% 
+    distinct(model_id, topic) %>% 
+    mutate(type = "intruder",
+           term = sample(vocabs, n() * nb_intruders))
+  
+  intruders_table <- list_top_words %>% 
+    group_by(model_id, topic) %>% 
+    slice_sample(n = nb_check_words) %>% 
+    mutate(type = "true_word") %>% 
+    ungroup() %>% 
+    bind_rows(intruders)
+  
+  intruders_table <- intruders_table %>% 
+    slice_sample(n = nrow(intruders_table)) %>% 
+    group_by(model_id, topic) %>% 
+    mutate(term_label = str_c(1:n(), "_", term),
+           rank_term = 1:n(),
+           rank_intruder = ifelse(type == "intruder", rank_term, NA),
+           rank_intruder = max(rank_intruder, na.rm = TRUE),
+           list_words = str_flatten_comma(term_label),
+           check_id = cur_group_id()) %>% 
+    group_by(check_id = factor(check_id, sample(unique(check_id)))) %>% # sampling the check id to have a random id
+    mutate(check_id = cur_group_id()) %>% 
+    ungroup() %>% 
+    distinct(check_id, model_id, topic, rank_intruder, list_words)
+  
+  return(intruders_table)
+}
+

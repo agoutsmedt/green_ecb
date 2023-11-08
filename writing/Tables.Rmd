@@ -1,0 +1,89 @@
+---
+title: "Tables"
+date: "`r Sys.Date()`"
+output: 
+  bookdown::word_document2
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, cache = TRUE, warning = FALSE)
+```
+
+```{r loading-data}
+library(tidyverse)
+library(data.table)
+library(here)
+library(flextable)
+data_path <- "C:/Users/goutsmedt/Documents/MEGAsync/Research/R/projets/data/green_ecb_responsiveness"
+
+K = 120
+lda_data <- readRDS(here(data_path, 
+             "topic_modelling",
+             paste0("LDA_", K, "_data.rds"))) %>% 
+  as.data.table() %>% 
+  .[, period := case_when(between(date, "1998-11-20", "2011-11-08") ~ "Period_1",
+                            between(date, "2011-11-08", "2021-09-01") ~ "Period_2",
+                            between(date, "2021-09-01", "2023-02-01") ~ "Period_3")] 
+
+lda_proximity <- readRDS(here(data_path, 
+                                     "topic_modelling",
+                                     "similarities_LDA.rds"))
+```
+
+```{r creating-table-topics}
+data_year_subset <- lda_data %>% 
+  filter(! is.na(period)) %>% 
+  .[,`:=` (mean = round(mean(gamma), 4)), by = .(topic, period)] %>%
+  .[order(period, desc(mean)),] %>% 
+  distinct(topic, topic_name, inflation_topic, period, mean) %>% 
+  .[, rank := 1:.N, by = period] %>%  
+  .[, prevalence := paste0(mean, " (", rank, ")")] %>% 
+  .[, total_prevalence := round(mean(mean), 4), by = .(topic)]
+
+rank <- data_year_subset %>% 
+  distinct(topic, total_prevalence) %>% 
+  mutate(rank_total = min_rank(desc(total_prevalence)))
+
+data_year_subset <- data_year_subset %>% 
+  select(-mean, -rank) %>%  
+  left_join(rank) %>% 
+  pivot_wider(names_from = "period", values_from = "prevalence") %>% 
+  arrange(desc(inflation_topic), desc(total_prevalence)) %>% 
+  mutate(total_prevalence = paste0(total_prevalence, " (", rank_total, ")"),
+         topic = paste0("**Topic ", topic, "**: ", topic_name)) %>% 
+  select(-topic_name, -rank_total) %>% 
+  rename("Total Prevalence" = total_prevalence,
+         "Prevalence (1999-2011)" = Period_1,
+         "Prevalence (2011-2021)" = Period_2,
+         "Prevalence (2021-2023)" = Period_3,
+         "Topic on Inflation" = inflation_topic,
+         "Topic" = topic)
+
+set_flextable_defaults(font.size = 8,
+                       padding = 3)
+data_year_subset <- flextable(data_year_subset) %>% 
+  set_caption(caption = "List of all topics") %>% 
+  ftExtra::colformat_md()
+set_table_properties(data_year_subset, layout = "autofit")
+
+```
+
+```{r creating-table-similarity}
+similarity <- lda_proximity %>% 
+  filter(similarity_measure == "jsd",
+         rank <= 15) %>% 
+  mutate(similarity = round(similarity, 2)) %>% 
+  mutate(Topic = paste0("**Topic ", topic, "**: ", topic_name, " (", similarity, ")"), .keep = "unused", .before = everything()) %>% 
+  pivot_wider(names_from = "period", values_from = "Topic") %>% 
+  select(-similarity_measure) %>% 
+  rename("Order" = rank,
+         "Prevalence (1999-2011)" = Period_1,
+         "Prevalence (2011-2021)" = Period_2,
+         "Prevalence (2021-2023)" = Period_3)
+
+similarity <- flextable(similarity) %>% 
+  set_caption(caption = "Highest similarity per period") %>% 
+  ftExtra::colformat_md()
+set_table_properties(similarity, layout = "autofit") 
+```
+

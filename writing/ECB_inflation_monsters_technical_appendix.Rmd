@@ -1,0 +1,397 @@
+---
+title: "Technical Appendix"
+subtitle: "The ECB and the inflation monsters: strategic framing and the responsibility
+  imperative (1999-2023)"
+date: "`r Sys.Date()`"
+output:
+  bookdown::html_document2:
+    theme: united
+    toc: yes
+    number_sections: yes
+    toc_float: yes
+    toc_depth: 3
+    code_folding: hide
+    df_print: paged
+bibliography: bibliography.bib
+csl: "chicago-author-date.csl"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, cache = TRUE, warning = FALSE)
+```
+
+```{js zoom-jquery, echo = FALSE}
+ $(document).ready(function() {
+    $('body').prepend('<div class=\"zoomDiv\"><img src=\"\" class=\"zoomImg\"></div>');
+    // onClick function for all plots (img's)
+    $('img:not(.zoomImg)').click(function() {
+      $('.zoomImg').attr('src', $(this).attr('src')).css({width: '100%'});
+      $('.zoomDiv').css({opacity: '1', width: 'auto', border: '1px solid white', borderRadius: '5px', position: 'fixed', top: '50%', left: '50%', marginRight: '-50%', transform: 'translate(-50%, -50%)', boxShadow: '0px 0px 50px #888888', zIndex: '50', overflow: 'auto', maxHeight: '100%'});
+    });
+    // onClick function for zoomImg
+    $('img.zoomImg').click(function() {
+      $('.zoomDiv').css({opacity: '0', width: '0%'}); 
+    });
+  });
+```
+
+```{r loading, eval=TRUE}
+library(tidyverse)
+library(data.table)
+library(here)
+library(kableExtra)
+library(tidytext)
+library(DT)
+data_path <- "C:/Users/goutsmedt/Documents/MEGAsync/Research/R/projets/data/green_ecb_responsiveness"
+source(here(path.expand("~"), "green_ecb", "function", "functions_for_topic_modelling.R"))
+K = 120
+
+# load the topics stats and gamma attributes
+lda <- readRDS(here(data_path, "topic_modelling", paste0("LDA_", K, ".rds")))
+lda_data <- readRDS(here(data_path, 
+             "topic_modelling",
+             paste0("LDA_", K, "_data.rds"))) %>% 
+  as.data.table() %>% 
+  .[, period := case_when(between(date, "1998-11-20", "2011-11-08") ~ "Period_1",
+                            between(date, "2011-11-08", "2021-09-01") ~ "Period_2",
+                            between(date, "2021-09-01", "2023-02-01") ~ "Period_3")] 
+
+lda_proximity <- readRDS(here(data_path, 
+                                     "topic_modelling",
+                                     "similarities_LDA.rds"))
+
+topics_to_look <- lda_proximity %>% 
+  filter(rank <= 5 | topic %in% c(114, 21, 91, 103),
+         ! topic %in% c(78, 76, 115, 43, 74, 109, 56, 61)) %>% 
+  distinct(topic)
+
+inflation_topics <- lda_data %>% 
+  filter(inflation_topic == TRUE) %>% 
+  distinct(topic)
+
+topics_to_look <- bind_rows(inflation_topics, topics_to_look) %>% 
+  mutate(rank = row_number())
+
+data_year_subset <- lda_data %>% 
+  filter(! is.na(period)) %>% 
+  .[,`:=` (mean = mean(gamma),
+           st_err = sd(gamma)/sqrt(length(gamma))), by = .(topic, period)] %>%
+  .[order(period, desc(mean)),] %>% 
+  distinct(topic, topic_name, inflation_topic, period, mean, st_err) %>% 
+  .[, rank := 1:.N, by = period] %>% 
+  pivot_wider(names_from = "period", values_from = c("mean", "st_err", "rank"))
+
+topics_per_speech <- lda_data %>%  
+  .[, gamma_speech := mean(gamma), by = .(topic, file)] %>% 
+  select(topic, file, title, year, date, speaker_cleaned, gamma_speech, pdf_link, period) %>% 
+  unique()
+```
+
+```{r, summary-topics, eval=TRUE}
+# Calculate top frex and lift value for the topic 
+beta_lda <- tidy(lda, matrix = "beta") %>% 
+  group_by(topic) %>% 
+  slice_max(order_by = beta, n = 15, with_ties = FALSE) %>% 
+  mutate(rank_beta = 1:n()) %>% 
+  select(topic, term_beta = term, rank_beta, beta)
+
+frex_lda <- calculate_frex(lda, 15, 0.5, topic_method = "LDA") %>% 
+  group_by(topic) %>% 
+  slice_max(order_by = frex, n = 15, with_ties = FALSE) %>% 
+  ungroup() %>% 
+  select(term_frex = term, rank_frex = rank, frex)
+
+lda_words <- beta_lda %>% 
+  bind_cols(frex_lda)
+ 
+# Most representative speech
+top_speech_paragraphs <- lda_data %>% 
+  select(topic, document_id, title, date, speaker_cleaned, period, pdf_link, paragraphs, gamma) %>% 
+  group_by(topic) %>% 
+  slice_max(gamma, n = 10, with_ties = FALSE) %>% 
+  mutate(title_link = paste0("[", title, "](", pdf_link, ")"),
+         paragraphs = str_trunc(paragraphs, 800, "right") %>% str_squish(),
+         gamma = round(gamma, 3)) %>% 
+  ungroup()
+
+top_speech <- topics_per_speech %>% 
+  select(topic, file, title, date, speaker_cleaned, period, pdf_link, gamma_speech) %>%  
+  group_by(topic) %>% 
+  slice_max(gamma_speech, n = 15, with_ties = FALSE) %>% 
+  mutate(title_link = paste0("[", title, "](", pdf_link, ")"),
+         gamma_speech = round(gamma_speech, 3)) %>% 
+  ungroup()
+
+# Most representative speech per period
+top_speech_paragraphs_period <- lda_data %>% 
+  select(topic, document_id, title, date, speaker_cleaned, period, pdf_link, paragraphs, period, gamma) %>% 
+  filter(! is.na(period)) %>% 
+  group_by(period, topic) %>% 
+  slice_max(gamma, n = 5, with_ties = FALSE) %>% 
+  mutate(title_link = paste0("[", title, "](", pdf_link, ")"),
+         paragraphs = str_trunc(paragraphs, 800, "right") %>% str_squish(),
+         gamma = round(gamma, 3)) %>% 
+  ungroup()
+
+top_speech_period <- topics_per_speech %>% 
+  select(topic, file, title, date, speaker_cleaned, period, pdf_link, gamma_speech, period) %>% 
+  filter(! is.na(period)) %>% 
+  group_by(period, topic) %>% 
+  slice_max(gamma_speech, n = 5, with_ties = FALSE) %>% 
+  mutate(title_link = paste0("[", title, "](", pdf_link, ")"),
+         gamma_speech = round(gamma_speech, 3)) %>% 
+  ungroup()
+
+# ordering topics
+
+list_topics <- data_year_subset %>% 
+  mutate(prevalence = mean_Period_1 + mean_Period_2 + mean_Period_3) %>% 
+  filter(topic %in% topics_to_look$topic) %>% 
+  arrange(desc(inflation_topic), desc(prevalence)) %>% 
+  mutate(topic_name = paste0("Topic ", topic, ": ", topic_name),
+         rank = row_number())
+```
+
+# Introduction
+
+Our article seeks to understand the transformations in ECB's framing of inflation issue between 1998 and early 2023. To observe these transformations, we use topic modeling on a corpus of ECB policymakers' speeches. 
+
+Topic modeling is a method used to uncover hidden themes (the topics) in a large corpus of text data. It is an "unsupervised" method that automatically identifies structures and categories in an unstructured corpus. This technical appendix provides all the details on our implementation and use of this method.
+
+# Step 1: Creating the corpus
+
+Our corpus is compose of the speeches of ECB's board members between `r lda_data$date |> min()` and `r lda_data$date |> max() - 1` listed on the Bank of International Settlements [website](https://www.bis.org/cbspeeches/index.htm?m=1010&cbspeeches=ZnJvbT0mdGlsbD0maW5zdGl0dXRpb25zPTYmb2JqaWQ9Y2JzcGVlY2hlcyZwYWdlPSZwYWdpbmdfbGVuZ3RoPTEwJnNvcnRfbGlzdD1kYXRlX2Rlc2MmdGhlbWU9Y2JzcGVlY2hlcyZtbD1mYWxzZSZtbHVybD0mZW1wdHlsaXN0dGV4dD0%253D). We have used tesseract [@tesseract] for Optical Character Recognition on some speeches for which recognition was not good. Thanks notably to R packages Tidytext [@tidytext] and tokenizers [@tokenizers], we divide each speech in a sequence of paragraphs. We remove bibliography paragraphs as well as paragraph with acknowledgements. 
+
+We want to focus on speeches that deal substantially with inflation. We thus decide to keep only the speeches that mention a certain number of times words containing "inflation" ("inflation", "inflationary", "disinflation" etc.). To take into account the length of a speech, we divide the frequency of "inflation" words by the speech number of pages. We test three thresholds under which we remove a speech:
+
+- a small threshold: in average, more than one occurrence per page of "inflation" in the speech;
+- a medium threshold: in average, more than one and half occurrence per page;
+- a large threshold: in average, more than 2 occurrences per page.
+
+Here is the number of speeches in the corpus depending on the threshold we use:
+
+```{r corpus-absolute, eval=TRUE}
+knitr::include_graphics(here::here("pictures", glue::glue("threshold_corpus_absolute.png")))
+```
+
+We see that it leads to remove a lot of speeches between 2009 and 2013, a sign that inflation was a less important issue at this time. But the differences between the different thresholds are not very large in average. We decide to take the more restrictive threshold (2 * number of pages), which gives us `r dplyr::distinct(lda_data, file) |> nrow()` speeches. This choice gives us a sufficiently large corpus to have a representative sample of speeches on inflation, while avoiding to integrate speeches in which inflation is not so central.
+
+# Step 2: Choosing the appropriate topic model 
+
+## Step 2.a: Pre-processing of the corpus {#preprocessing}
+
+Texts are tokenized with *tidytext* [@tidytext] and *tokenizers* [@tokenizers] packages. We keep unigrams (like "price"), bigrams ("price stability") and trigrams ("maintain price stability"). The corpus is organised in paragraphs: the documents in the topic modelling are the `r dplyr::distinct(lda_data, document_id) |> nrow()` paragraphs of the `r dplyr::distinct(lda_data, file) |> nrow()` speeches. This allows *(i)* for a more fine-grained understanding of what the whole speech is about as well as *(ii)* to measure more accurately correlation between topics, at the paragraph level.
+
+We remove the words in the stopwords lists "nltk" and "iso" implemented in R packages *stopwords* [@stopwords]. These are large list of stopwords, allowing us to remove unnecessary words in our analysis.^[We add to these stopwords lists some irrelevant words like "research", "member", etc., which were likely to popped up regularly in our corpus] We lemmatize each word using the dictionary incorporated in *textstem* [@textstem].  
+
+## Step 2.b: Evaluating different models
+
+### Latent Dirichlet Allocation
+
+To run our topic model, we use the usual Latent Dirichlet Allocation (LDA), which is a probabilistic generative model employed in machine learning to detect topics present in a collection of a document. It presupposes that each document comprises a blend of a limited number of concealed topics, with each word in the document generated by one of those topics.
+
+The LDA model characterizes each document as a distribution of topics, wherein each topic is a distribution over words. It uses Bayesian inference to estimate the probability distribution of topics and words within each document, as well as the overall distribution of topics in the entire collection.
+
+The algorithm encompasses three steps: 
+
+1. initializing the topic and word distributions
+2. iteratively allocating words in each document to topics based on their likelihood of belonging to each topic
+3. updating the topic and word distributions according to the assignments. The process persists until convergence is achieved, at which point the topic and word distributions are utilized to determine the most probable topics within each document.
+
+We use the LDA model as it has been proved useful in many research [@boyd-graber2017; @nelson2020; @macanovic2022]. The structural topic model [STM; @roberts2013a] has been often used by political scientists in the recent years. It allows to "incorporate structure" in the model [@grimmer2022, 244] by integrating additional categories attributed to the document (e.g., the writer, the audience, the year, etc...), and observe, notably, how topics prevalence varies depending on these categories. However, the only relevant metadata in our case was the date of speeches, and the LDA allows to take into account conveniently the variation of topics prevalence over time. We thus felt that it was not needed to go for another type of model. 
+
+### Choosing the model
+
+@denny2018 have shown that the choice of pre-processing steps (lemmatization or stemming, choosing stop words to remove, filtering rare words, etc.) and their order may have a large impact on the results of topic modelling. One risk according to @denny2018 is to choose the results that correspond the most to what the authors want to say. We took care of Denny and Spirling's point in three ways.
+
+#### Pre-processing choices
+
+First, we adopted specific pre-processing choices and we stuck to them (lemmatisation, large list of stop words, keeping also bigrams and trigrams; see section \@ref(preprocessing)). Consequently, we were not able to manipulate these pre-processing steps to obtain the results we wanted. 
+
+#### Testing different models
+
+Second, we have tested different preprocessing regarding one crucial choice: the filtering of rare words. We have tested three different thresholds, by removing all the *ngrams* which appear less than 5, 10 or 20 times. This results in a different vocabulary. We run our LDA model for each of these vocabulary lists. 
+
+We also test different models for different number of topics, from 30 topics to 160, going 10 by 10. For each of our three vocabulary filters, we thus run 14 models with a different number of topics, for a total of 42 models. We use both quantitative and qualitative approaches to choose our filtering threshold and the number of topics.
+
+First, we perform 4 quantitative metrics implemented in @ldatuning for our different models. Two metrics inspired by @arun2010 and @cao2009 has to be minimized; the two others, inspired by @griffiths2004 and @deveaud2014 has to be maximized. Here is an interactive figure to observe the results for the different pre-processing methods (method 1 for more than 5 occurrences; method 2 for more than 10; and method 3 for more than 20). The crosses indicate the maximized and minimized values. 
+
+```{r, eval = FALSE}
+htmltools::includeHTML(here::here("writing", "tuning_topicmodels.html"))
+```
+
+<iframe src="tuning_topicmodels.html" width="100%" height="500px">
+</iframe>
+
+We select different number of topics for each method, where the average metrics appear good. The number of topics chosen is indicated by vertical line. We have selected 6 models, with different combinations of pre-processing method and number of topics, to be evaluated qualitatively. The qualitative assessment allows us to evaluate the "interpretability" of our different models. Interpretability in topic modeling refers to the ability for humans to understand and make sense of the topics that are generated by the model. In other words, an interpretable topic model is one that produces topics that are meaningful, coherent, and useful for understanding the underlying structure of the data.
+
+One method for evaluating the interpretability of topic models is called the "intruder" method [@chang2009]. The intruder method involves adding a word that does not belong to a given topic into the list of top words for that topic and evaluating whether the human evaluator can identify the "intruder" word. If the human evaluator can easily identify the intruder word, then the topic is considered to be more interpretable. This method provides a useful way to compare the interpretability of different topic models.
+
+For each topic models, we select randomly 30 topics in which a intruder has to be found. The whole list of topics (with 180 topics) is sampled: there is no way to connect a topic to evaluate with the model it comes from. We reproduce this three times to give to evaluate to three different human coders. The following figure displays the result:
+
+```{r plot-intruder, eval=TRUE}
+knitr::include_graphics(here::here("pictures", glue::glue("plot_intruder.png")))
+```
+
+After looking to the details of two best topic modelling (55 topics with pre-processing method 2; 120 topics with method 3), it appears that choosing 120 topics allowed for more granularity in the evolution of ECB communication. We thus choose the model with 120 topics and a vocabulary of `r tidytext::tidy(lda) |> dplyr::distinct(term) |> nrow()` words and expressions.
+
+#### Validation of the model
+
+The third step to take care of the quality of our preprocessing choices and our model was to validate it according to our knowledge of the ECB's communication history. Many easily interpretable topics are highly prevalent at moments of time when we can expect that they will be. This testifies of the quality of our model, and thus gives us confidence to push further our interpretation of the results. Here are a set of examples, linked to very specific dates in the history of the Eurosystem:
+
+- The first of January 2002, twelve countries adopted the Euro. Topic 89 about "cash and banknotes" is highly prevalent in 2002.  
+- The ECB started quantitative easing with its asset purchase programmes in October 2014. Topic 4 on this matter started to be prevalent at this time.
+- The topic 34 about financial crisis was highly prevalent in 2008-2010.
+- The Topic 15 about the Covid pandemic and the ECB "Pandemic Emergency Purchase Programme" appears after 2020 and started to decrease at the end of 2021.
+- In February 2022 started the invasion of Ukraine by Russia. The topic 12 about the war in Ukraine started to pop up in 2022.
+
+```{r plot-validation, eval=TRUE}
+knitr::include_graphics(here::here("pictures", glue::glue("plot_validation.png")))
+```
+
+# Step 3: Analysing the results
+
+## General presentation of the topic model
+
+To understand our `r K` topics, we first look at two types of statistics:
+
+- the top "beta" words, i.e. the list of the top words for each topic. These are the words that have the highest probability of appearing in the documents that are assigned to that topic. Examining the top words can give a sense of the general theme or subject matter of the topic.
+- the FREX value [@bischof2012] is a metric for evaluating the quality of keywords within a topic. It takes into account both the frequency of a given word within a topic and the exclusivity of that word to that topic (i.e. the degree to which the word is used almost exclusively within that topic).
+
+These two sets of keywords allows to distinguish between `r lda_data |> dplyr::filter(inflation_topic == TRUE) |> dplyr::distinct(topic) |> nrow()` topics on inflation and price stability and other topics. The `r lda_data |> dplyr::filter(inflation_topic == TRUE) |> dplyr::distinct(topic) |> nrow()` are the topics which have "inflation" or "price" in their 5 top beta words.  
+
+Here is the list of the `r K` topics and of their prevalence across the three periods. Red filling represents a high prevalence, grey a middle one and blue a low one. You can order the column by prevalence, as well as filter the topics according to keywords.
+
+```{r topic-table}
+lda_words_collapsed <- lda_words %>% 
+  filter(rank_beta <= 10) %>% 
+  select(-starts_with("rank")) %>% 
+  group_by(topic) %>% 
+  summarise(across(starts_with("term"), ~str_flatten(., collapse = "; "))) %>%
+  left_join(select(data_year_subset, topic, starts_with("mean")))
+
+quants <- quantile(lda_words_collapsed$mean_Period_1)[2:4]
+datatable(lda_words_collapsed,
+          class = 'cell-border stripe',
+          rownames = FALSE) %>% 
+  formatStyle(names(lda_words_collapsed)[4:6],
+              backgroundColor = styleInterval(c(quants[1], quants[2], quants[3]), c('lightgray', "lightblue", "pink", "red")))
+```
+
+We assess the prevalence per period by averaging the "gamma" values of all paragraphs published in a period with the corresponding topic. The "gamma" value measure the strength of the association between a document (here a speech paragraph) and a topic.
+
+## Evolution of topics over time
+
+To obtain a more fine-grained overview of the evolution of each topic, we can regress the gamma values of each topic on dates. In other words, we take the average of gamma values for each topic at the different dates of speech publication, and we want to create a smooth curve that represents the overall trend of topics over time. We are using an estimation method called "loess" to create a smooth curve that connects those average values. The loess method works by fitting a series of local polynomial regression models to the data, with each model centered on a particular point along the x-axis (in this case, the dates). The resulting curve is a smoothed representation of the data that helps to highlight the overall trend while minimizing the impact of random fluctuations or outliers.^[For this local polynomial regression, we use a "span" parameter of 0,2. The "span" parameter is a value used in the loess method to control the amount of smoothing applied to the curve. Specifically, it determines the width of the window of data points used to fit each local polynomial regression model. A larger span value will result in a smoother curve that better captures the overall trend in the data but may miss some of the smaller fluctuations or details. A smaller span value will result in a more jagged curve that captures more of the individual data points.] 
+
+Here is the evolution of the topics over time:  
+
+```{r lda-date, eval=TRUE}
+knitr::include_graphics(here::here("pictures", glue::glue("TM_LDA_topic_per_date.png")))
+```
+
+We use the same method to produce the figures on topics evolution in the article.
+
+We can also zoom on the `r lda_data |> dplyr::filter(inflation_topic == TRUE) |> dplyr::distinct(topic) |> nrow()` topics on inflation and price stability.
+
+```{r lda-main-topic, eval=TRUE}
+knitr::include_graphics(here::here("pictures", glue::glue("TM_LDA_main_topic_per_date.png")))
+```
+
+## Calculating similarities
+
+Beyond observing the variation of topics prevalence over time, we also rank the non-inflation topics according to their similarity to the inflation and price stability topics. For each paragraph, we average the gamma values associated with the `r lda_data |> dplyr::filter(inflation_topic == TRUE) |> dplyr::distinct(topic) |> nrow()` topics on inflation. We then compare this vector of average gamma values, with the vector of gamma values for each other topic. For each period, we use two similarity measures:
+
+- Cosine similarity measures the cosine of the angle between two vectors in a high-dimensional space. In the context of topic modeling, each topic distribution can be seen as a vector in a high-dimensional space, where the dimensions correspond to the different documents of the corpus. 
+- Jensen-Shannon divergence, on the other hand, measures the difference between two probability distributions based on their relative entropy or Kullback-Leibler divergence. Unlike cosine similarity, the Jensen-Shannon divergence takes into account the magnitude of the probability distributions (ie the total probability mass or density of the distribution), not just their direction. 
+
+We then rank the different topics according to their similarity measures, "1" representing the topic the most correlated with topics on inflation and price stability. The following table displays the correlation ranking of each topic for each period and measures. 
+
+```{r lda-similarity}
+
+proximities <- lda_proximity %>% 
+  filter(similarity_measure %in% c("cosine", "jsd")) %>% 
+  select(-similarity) %>% 
+  pivot_wider(names_from = "similarity_measure",
+              values_from = all_of("rank"))
+
+proximities %>% 
+  mutate(period = case_match(period,
+                             "Period_1" ~ "1998-2011",
+                             "Period_2" ~ "2011-2021",
+                             "Period_3" ~ "2021-2023")) %>% 
+  datatable(class = "cell-border stripe",
+          rownames = FALSE) %>% 
+  formatStyle(names(proximities)[4:5],
+              backgroundColor = styleEqual(c(1:10, 40:120), c(rep('lightblue', 10), rep("lightgray", 81))))
+```
+
+In the article, we use the Jensen-Shannon divergence as we want to take into account the fact that some topics are more prevalent than others (and so have a higher magnitude). Indeed, the cosine measure is based solely on the cosine of the angle between the two vectors representing the topic distributions, and thus does not take into account the magnitudes of the vectors.  
+
+
+# Information on all the topics
+
+Here are gathered a series of information about each topic: 
+
+- The 15 ngrams with the highest beta and FREX values
+- The 5 paragraphs the most associated to the topic for each period
+- The 5 speeches the most associated to the topic for each period
+
+```{r plot-topics, results = "asis", eval=TRUE}
+
+for(i in (1:K)[-c(91,99)]){
+topic_stats <- data_year_subset %>% 
+  filter(topic == i)
+
+  ################ Beginning of the template ######################
+  cat("## ", paste0("**Topic ", topic_stats$topic, "**: ", topic_stats$topic_name), "\n")
+
+  cat("###", "Describing Topics in general \n\n")
+  cat("The most common terms according to different indicators:\n\n")
+  print(kable(filter(lda_words, topic == i)) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  
+   cat("###", "Describing Topics for the 3 periods \n\n")
+  cat("We list the 5 most representative paragraphs for each period:\n\n")
+  print(kable(filter(top_speech_paragraphs_period, topic == i) %>% select(title_link, period, date, gamma, paragraphs)) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F), font_size = 12))
+  cat("\n\n")
+  
+  cat("The most representative speeches:\n\n")
+  print(kable(filter(top_speech_period, topic == topic_stats$topic) %>% select(title_link, period, date, gamma_speech)) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F), font_size = 12))
+  cat("\n\n")
+}
+```
+
+```{r plot-topics-remaining, results = "asis", eval=TRUE}
+
+for(i in c(91,99)){
+topic_stats <- data_year_subset %>% 
+  filter(topic == i)
+
+  ################ Beginning of the template ######################
+  cat("## ", paste0("**Topic ", topic_stats$topic, "**: ", topic_stats$topic_name), "\n")
+
+  cat("###", "Describing Topics in general \n\n")
+  cat("The most common terms according to different indicators:\n\n")
+  print(kable(filter(lda_words, topic == i)) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  
+   cat("###", "Describing Topics for the 3 periods \n\n")
+  cat("We list the 5 most representative paragraphs for each period:\n\n")
+  print(kable(filter(top_speech_paragraphs_period, topic == i) %>% select(title_link, period, date, gamma, paragraphs)) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F), font_size = 12))
+  cat("\n\n")
+  
+    cat("The most representative speeches:\n\n")
+  print(kable(filter(top_speech_period, topic == topic_stats$topic) %>% select(title_link, period, date, gamma_speech)) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F), font_size = 12))
+  cat("\n\n")
+}
+```
+
+# References
+

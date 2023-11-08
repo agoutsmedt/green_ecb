@@ -1,0 +1,157 @@
+---
+title: "List of Topics"
+subtitle: "The ECB and the inflation monsters: strategic framing and the responsibility imperative (1999-2023)"
+date: "`r Sys.Date()`" 
+output: 
+  html_document:
+    theme: united
+    toc: true
+    number_sections: true
+    toc_float: true
+    toc_depth: 3
+    code_folding: hide
+    df_print: paged
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, cache = TRUE, warning = FALSE)
+```
+
+```{r loading}
+# load packages, paths, and the macro plateform data
+library(tidyverse)
+library(data.table)
+library(here)
+library(kableExtra)
+library(tidytext)
+library(DT)
+data_path <- "C:/Users/goutsmedt/Documents/MEGAsync/Research/R/projets/data/green_ecb_responsiveness"
+source(here(path.expand("~"), "green_ecb", "function", "functions_for_topic_modelling.R"))
+K = 120
+
+# load the topics stats and gamma attributes
+lda <- readRDS(here(data_path, "topic_modelling", paste0("LDA_", K, ".rds")))
+lda_data <- readRDS(here(data_path, 
+             "topic_modelling",
+             paste0("LDA_", K, "_data.rds"))) %>% 
+  as.data.table() %>% 
+  .[, period := case_when(between(date, "1998-11-20", "2011-11-08") ~ "Period_1",
+                            between(date, "2011-11-08", "2021-09-01") ~ "Period_2",
+                            between(date, "2021-09-01", "2023-02-01") ~ "Period_3")] 
+
+lda_proximity <- readRDS(here(data_path, 
+                                     "topic_modelling",
+                                     "similarities_LDA.rds"))
+
+data_year_subset <- lda_data %>% 
+  filter(! is.na(period)) %>% 
+  .[,`:=` (mean = mean(gamma),
+           st_err = sd(gamma)/sqrt(length(gamma))), by = .(topic, period)] %>%
+  .[order(period, desc(mean)),] %>% 
+  distinct(topic, topic_name, inflation_topic, period, mean, st_err) %>% 
+  .[, rank := 1:.N, by = period] %>% 
+  pivot_wider(names_from = "period", values_from = c("mean", "st_err", "rank"))
+
+topics_per_speech <- lda_data %>%  
+  .[, gamma_speech := mean(gamma), by = .(topic, file)] %>% 
+  select(topic, file, title, year, date, speaker_cleaned, gamma_speech, pdf_link, period) %>% 
+  unique()
+
+# Calculate top frex and lift value for the topic 
+beta_lda <- tidy(lda, matrix = "beta") %>% 
+  group_by(topic) %>% 
+  slice_max(order_by = beta, n = 15, with_ties = FALSE) %>% 
+  mutate(rank_beta = 1:n()) %>% 
+  select(topic, term_beta = term, rank_beta, beta)
+
+frex_lda <- calculate_frex(lda, 15, 0.5, topic_method = "LDA") %>% 
+  group_by(topic) %>% 
+  slice_max(order_by = frex, n = 15, with_ties = FALSE) %>% 
+  ungroup() %>% 
+  select(term_frex = term, rank_frex = rank, frex)
+
+lda_words <- beta_lda %>% 
+  bind_cols(frex_lda)
+
+# Most representative speech per period
+top_speech_paragraphs_period <- lda_data %>% 
+  select(topic, document_id, title, date, speaker_cleaned, period, pdf_link, paragraphs, period, gamma) %>% 
+  filter(! is.na(period)) %>% 
+  group_by(period, topic) %>% 
+  slice_max(gamma, n = 5, with_ties = FALSE) %>% 
+  mutate(title_link = paste0("[", title, "](", pdf_link, ")"),
+         paragraphs = str_trunc(paragraphs, 1500, "right") %>% str_squish(),
+         gamma = round(gamma, 3)) %>% 
+  ungroup()
+
+top_speech_period <- topics_per_speech %>% 
+  select(topic, file, title, date, speaker_cleaned, period, pdf_link, gamma_speech, period) %>% 
+  filter(! is.na(period)) %>% 
+  group_by(period, topic) %>% 
+  slice_max(gamma_speech, n = 5, with_ties = FALSE) %>% 
+  mutate(title_link = paste0("[", title, "](", pdf_link, ")"),
+         gamma_speech = round(gamma_speech, 3)) %>% 
+  ungroup()
+
+```
+
+# Information on all the topics
+
+Topics that deal with inflation are displayed first. Within topics dealing with inflation and topics that deal with other subjects, topics are ranked from the most prevalent topic to the less prevalent one.
+
+```{r plot-topics, results = "asis", eval=TRUE}
+
+for(i in (1:K)[-99]){
+topic_stats <- data_year_subset %>% 
+  filter(topic == i)
+
+  ################ Beginning of the template ######################
+  cat("## ", paste0("**Topic ", topic_stats$topic, "**: ", topic_stats$topic_name), "\n")
+
+  cat("###", "Describing Topics in general \n\n")
+  cat("The most common terms according to different indicators:\n\n")
+  print(kable(filter(lda_words, topic == i)) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  
+   cat("###", "Describing Topics for the 3 periods \n\n")
+  cat("We list the 5 most representative paragraphs for each period:\n\n")
+  print(kable(filter(top_speech_paragraphs_period, topic == i) %>% select(title_link, period, date, gamma, paragraphs)) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F), font_size = 12))
+  cat("\n\n")
+  
+  cat("The most representative speeches:\n\n")
+  print(kable(filter(top_speech_period, topic == topic_stats$topic) %>% select(title_link, period, date, gamma_speech)) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F), font_size = 12))
+  cat("\n\n")
+}
+```
+
+```{r plot-topics-remaining, results = "asis", eval=TRUE}
+
+for(i in 99){
+topic_stats <- data_year_subset %>% 
+  filter(topic == i)
+
+  ################ Beginning of the template ######################
+  cat("## ", paste0("**Topic ", topic_stats$topic, "**: ", topic_stats$topic_name), "\n")
+
+  cat("###", "Describing Topics in general \n\n")
+  cat("The most common terms according to different indicators:\n\n")
+  print(kable(filter(lda_words, topic == i)) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F)))
+  cat("\n\n")
+  
+   cat("###", "Describing Topics for the 3 periods \n\n")
+  cat("We list the 5 most representative paragraphs for each period:\n\n")
+  print(kable(filter(top_speech_paragraphs_period, topic == i) %>% select(title_link, period, date, gamma, paragraphs)) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F), font_size = 12))
+  cat("\n\n")
+  
+    cat("The most representative speeches:\n\n")
+  print(kable(filter(top_speech_period, topic == topic_stats$topic) %>% select(title_link, period, date, gamma_speech)) %>%
+          kable_styling(bootstrap_options = c("striped", "condensed", full_width = F), font_size = 12))
+  cat("\n\n")
+}
+```
